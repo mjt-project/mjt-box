@@ -1,0 +1,19 @@
+# --- Build outputs ---
+target/
+*.class
+*.jar
+
+# --- Môi trường IDE ---
+.idea/
+*.iml
+.vscode/
+
+# --- TÀI NGUYÊN TẢI ĐỘNG (TUYỆT ĐỐI KHÔNG UPLOAD) ---
+# Tránh vi phạm giấy phép phân phối lại nhị phân
+proot
+*.tar.gz
+alpine-fs/
+.mjt-env/
+
+# --- Log files ---
+*.log
