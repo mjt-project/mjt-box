@@ -28,15 +28,20 @@ public class ProotOrchestrator {
             prootExe.setExecutable(true, false);
         }
 
+        // Lấy thư mục hiện tại của Host (Trên Pterodactyl, nó chính là /home/container)
+        String hostWorkspace = System.getProperty("user.dir");
+
         // 1. Cấu hình luồng thực thi (Execution Builder)
-        // ... (Code cũ của em giữ nguyên)
         List<String> command = new ArrayList<>(Arrays.asList(
                 "./proot",
                 "-S", rootfsDir,        // Chroot và chia sẻ hệ thống
-                "-w", "/root",          // Đặt thư mục làm việc mặc định khi vào là /root
-                "-b", "/dev:/dev",      // Bind mount: Bơm thiết bị ảo (urandom, null, zero)
+                "-w", "/root",          // Đặt thư mục làm việc mặc định
+                "-b", "/dev:/dev",      // Bind mount: Bơm thiết bị ảo
                 "-b", "/sys:/sys",      // Bind mount: Bơm thông tin phần cứng
-                "-b", "/proc:/proc"     // Bind mount: Bơm bảng quản lý tiến trình
+                "-b", "/proc:/proc",    // Bind mount: Bơm bảng quản lý tiến trình
+                
+                // [TÍNH NĂNG MỚI]: Mount thư mục gốc /home/container vào /workspace bên trong Linux
+                "-b", hostWorkspace + ":/workspace" 
         ));
 
         // [TỬ HUYỆT MẠNG]: Nếu hệ thống vật lý có file phân giải DNS, phải ép nó vào Sandbox
@@ -50,6 +55,8 @@ public class ProotOrchestrator {
         command.add(shellPath);
 
         ProcessBuilder pb = new ProcessBuilder(command);
+
+        
         
         // [VŨ KHÍ CHỐNG SEGFAULT]: Ép PRoot bỏ qua lớp khiên bảo vệ Seccomp
         pb.environment().put("PROOT_NO_SECCOMP", "1");
