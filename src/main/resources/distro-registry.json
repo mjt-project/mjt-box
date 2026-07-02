@@ -1,0 +1,31 @@
+{
+  "os_list": [
+    {
+      "id": "ubuntu-22.04",
+      "display_name": "Ubuntu 22.04 LTS (Jammy)",
+      "shell_path": "/bin/bash",
+      "urls": {
+        "x86_64": "http://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.1-base-amd64.tar.gz",
+        "aarch64": "http://cdimage.ubuntu.com/ubuntu-base/releases/22.04/release/ubuntu-base-22.04.1-base-arm64.tar.gz"
+      }
+    },
+    {
+      "id": "alpine-3.24",
+      "display_name": "Alpine Linux 3.24 (Mini)",
+      "shell_path": "/bin/sh",
+      "urls": {
+        "x86_64": "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/x86_64/alpine-minirootfs-3.24.1-x86_64.tar.gz",
+        "aarch64": "https://dl-cdn.alpinelinux.org/alpine/v3.24/releases/aarch64/alpine-minirootfs-3.24.1-aarch64.tar.gz"
+      }
+    },
+    {
+    "id": "debian-bullseye",
+      "display_name": "Debian 11 (Bullseye - from EXALAB / Anlinux Resources)",
+      "shell_path": "/bin/bash",
+      "urls": {
+        "x86_64": "https://raw.githubusercontent.com/EXALAB/Anlinux-Resources/master/Rootfs/Debian/amd64/debian-rootfs-amd64.tar.xz",
+        "aarch64": "https://raw.githubusercontent.com/EXALAB/Anlinux-Resources/master/Rootfs/Debian/arm64/debian-rootfs-arm64.tar.xz"
+      }
+    }
+  ]
+}
