@@ -110,21 +110,19 @@ public class DistroProvisioner {
         OutputLogger.success("Tải hoàn tất: " + taskName);
     }
 
-
-    /**
-     * Dò tìm URL PRoot tĩnh dựa trên CPU hiện tại
-     * (Đã khóa cứng ở bản v5.3.0 để chống lỗi API thiếu tệp nhị phân)
+/**
+     * Dò tìm URL PRoot tĩnh (Trỏ thẳng vào kho Archive tĩnh của tác giả)
      */
     private static String fetchDynamicProotUrl() {
         String arch = HardwareProber.getSystemArchitecture();
+        OutputLogger.info("Đang kết nối kho lưu trữ lõi cho CPU: " + arch);
         
-        // Trỏ thẳng về bản v5.3.0 (Bản ổn định cuối cùng có đính kèm file tĩnh)
         if (arch.equals("x86_64")) {
-            return "https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-x86_64-static";
+            return "https://raw.githubusercontent.com/proot-me/proot-static-build/master/static/proot-x86_64";
         } else if (arch.equals("aarch64")) {
-            return "https://github.com/proot-me/proot/releases/download/v5.3.0/proot-v5.3.0-aarch64-static";
+            return "https://raw.githubusercontent.com/proot-me/proot-static-build/master/static/proot-arm64";
         }
         
-        throw new RuntimeException("Không tìm thấy tệp lõi PRoot cho kiến trúc: " + arch);
+        throw new RuntimeException("Kiến trúc CPU không được hỗ trợ: " + arch);
     }
 }

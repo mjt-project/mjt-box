@@ -51,9 +51,11 @@ public class ProotOrchestrator {
 
         ProcessBuilder pb = new ProcessBuilder(command);
         
-        // [TỐI ƯU HÓA]: Chỉ bơm biến chống tương tác cho họ nhà Debian/Ubuntu Đặt tên biến tranh lỗi cài đặt cho các bản phân phối khác từ `apt` hoặc `dpkg` (VD: Alpine, Fedora, Arch) sẽ không bị ảnh hưởng.
-        boolean disableInteractive = ConfigManager.getBoolean("debian-frontend-noninteractive", true);
+        // [VŨ KHÍ CHỐNG SEGFAULT]: Ép PRoot bỏ qua lớp khiên bảo vệ Seccomp
+        pb.environment().put("PROOT_NO_SECCOMP", "1");
         
+        // (Khối code cũ của Ubuntu/Debian vẫn giữ nguyên bên dưới)
+        boolean disableInteractive = ConfigManager.getBoolean("debian-frontend-noninteractive", true);
         if (disableInteractive && (rootfsDir.contains("ubuntu") || rootfsDir.contains("debian"))) {
             pb.environment().put("DEBIAN_FRONTEND", "noninteractive");
         }
