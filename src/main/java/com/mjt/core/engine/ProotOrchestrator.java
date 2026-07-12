@@ -1,9 +1,6 @@
 package com.mjt.core.engine;
 
 import java.io.File;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -15,14 +12,9 @@ public class ProotOrchestrator {
 
     private Process prootProcess;
 
-    /**
-     * Khởi động không gian ngầm và chuyển giao quyền lực Terminal
-     */
-
     public void bootEnvironment(String rootfsDir, String shellPath) throws Exception {
         OutputLogger.info("Đang nạp lõi Engine. Chuẩn bị đoạt quyền I/O...");
 
-        // [TỰ CHỮA LÀNH QUYỀN TRUY CẬP]: Ép buộc quyền thực thi (chmod +x) trước khi kích nổ
         File prootExe = new File("proot");
         if (prootExe.exists() && !prootExe.canExecute()) {
             prootExe.setExecutable(true, false);
@@ -31,47 +23,75 @@ public class ProotOrchestrator {
         // Lấy thư mục hiện tại của Host (Trên Pterodactyl, nó chính là /home/container)
         String hostWorkspace = System.getProperty("user.dir");
 
-        // 1. Cấu hình luồng thực thi (Execution Builder)
+        // ==========================================
+        // [AUTO-PATCH] only for ubuntu
+        // ==========================================
+        if (rootfsDir.contains("ubuntu") || rootfsDir.contains("debian")) {
+            // 1. Trị dứt điểm lỗi "ucf: do not have write privilege"
+            File ucfDir = new File(rootfsDir, "var/lib/ucf");
+            if (!ucfDir.exists()) {
+                ucfDir.mkdirs();
+            }
+            ucfDir.setWritable(true, false); // Cấp quyền ghi tuyệt đối (chmod 777) cho ucf
+
+            // 2. Ép APT triệt sản: Không cài gói rác (Recommends/Suggests)
+            File aptConfDir = new File(rootfsDir, "etc/apt/apt.conf.d");
+            if (aptConfDir.exists()) {
+                try {
+                    File aptOptimize = new File(aptConfDir, "99-mjt-optimize");
+                    java.nio.file.Files.writeString(aptOptimize.toPath(), 
+                        "APT::Install-Recommends \"false\";\nAPT::Install-Suggests \"false\";\n");
+                } catch (Exception e) {
+                    OutputLogger.warning("Không thể ghi cấu hình tối ưu APT.");
+                }
+            }
+        }
+        // 1. Khởi tạo danh sách lệnh với các cờ (Options) của PRoot TRƯỚC
         List<String> command = new ArrayList<>(Arrays.asList(
                 "./proot",
-                "-S", rootfsDir,        // Chroot và chia sẻ hệ thống
-                "-w", "/root",          // Đặt thư mục làm việc mặc định
-                "-b", "/dev:/dev",      // Bind mount: Bơm thiết bị ảo
-                "-b", "/sys:/sys",      // Bind mount: Bơm thông tin phần cứng
-                "-b", "/proc:/proc",    // Bind mount: Bơm bảng quản lý tiến trình
-                
-                // [TÍNH NĂNG MỚI]: Mount thư mục gốc /home/container vào /workspace bên trong Linux
-                "-b", hostWorkspace + ":/workspace" 
+                "-0",                   
+                "-S", rootfsDir,        
+                "-w", "/root",          
+                "-b", hostWorkspace + ":/workspace"
         ));
 
-        // [TỬ HUYỆT MẠNG]: Nếu hệ thống vật lý có file phân giải DNS, phải ép nó vào Sandbox
+        // 2. Chèn tiếp các cấu hình mạng (Nếu có)
         File resolvConf = new File("/etc/resolv.conf");
         if (resolvConf.exists()) {
             command.add("-b");
             command.add("/etc/resolv.conf:/etc/resolv.conf");
         }
 
-        // Chốt hạ bằng lệnh gọi Shell (/bin/sh hoặc /bin/bash)
+        // 3. [CHỐT HẠ]: Nạp đường dẫn Shell
         command.add(shellPath);
 
-        ProcessBuilder pb = new ProcessBuilder(command);
+        // ==========================================
+        // [TÍNH NĂNG MỚI]: ENTRYPOINT (TỰ ĐỘNG THỰC THI LỆNH)
+        // ==========================================
+        String startupCmd = ConfigManager.get("startup-command", "");
+        
+        if (!startupCmd.isEmpty()) {
+            OutputLogger.info("Kích hoạt lệnh khởi động tự động (Entrypoint): " + startupCmd);
+            command.add("-c");         // Báo cho Bash biết: "Đừng mở màn hình chờ, chạy lệnh sau đây rồi thoát!"
+            command.add(startupCmd);   // Bơm lệnh vào
+        }
 
-        
-        
-        // [VŨ KHÍ CHỐNG SEGFAULT]: Ép PRoot bỏ qua lớp khiên bảo vệ Seccomp
+        // Khởi tạo Process Builder...
+        ProcessBuilder pb = new ProcessBuilder(command);
+        pb.inheritIO();
+
+        pb.environment().put("LC_ALL", "C.UTF-8");
+        pb.environment().put("LANG", "C.UTF-8");
+        pb.environment().put("TERM", "xterm-256color");
         pb.environment().put("PROOT_NO_SECCOMP", "1");
         
-        // (Khối code cũ của Ubuntu/Debian vẫn giữ nguyên bên dưới)
         boolean disableInteractive = ConfigManager.getBoolean("debian-frontend-noninteractive", true);
         if (disableInteractive && (rootfsDir.contains("ubuntu") || rootfsDir.contains("debian"))) {
             pb.environment().put("DEBIAN_FRONTEND", "noninteractive");
         }
         
-        pb.redirectErrorStream(true);
-        // 2. Kích nổ tiến trình ngầm
         this.prootProcess = pb.start();
 
-        // [BẢO MẬT BỘ NHỚ]: Vệ sĩ dọn dẹp Zombie Process
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             if (prootProcess != null && prootProcess.isAlive()) {
                 System.out.println("\n[MJT-Engine] Tín hiệu ngắt cấp bách! Đang tiêu diệt tiến trình ngầm...");
@@ -81,52 +101,9 @@ public class ProotOrchestrator {
 
         OutputLogger.success("Thâm nhập thành công! Bàn giao Terminal cho Kernel ảo...\n");
 
-        // 3. Đoạt quyền Luồng Dữ liệu (Stream Hijacking)
-        // Luồng Đọc (Daemon): Chạy nền, liên tục lấy output từ Linux in ra màn hình
-        Thread outputPumper = new Thread(this::pumpOutput);
-        outputPumper.setDaemon(true);
-        outputPumper.start();
+        // Treo luồng chính của Java để chờ phiên Linux kết thúc (khi người dùng gõ 'exit')
+        this.prootProcess.waitFor();
 
-        // Luồng Ghi (Main Thread): Bị khóa (Block) ở đây để chờ người dùng gõ phím
-        pumpInput();
-
-        // 4. Thoát an toàn
-        // Khi người dùng gõ lệnh 'exit' trong Shell, Linux sẽ tự đóng -> vòng lặp pumpInput kết thúc
         OutputLogger.info("Phiên làm việc kết thúc. Đã đóng gói và giải phóng vùng nhớ ảo.");
-    }
-
-    /**
-     * Bơm dữ liệu xuất: Từ Linux -> Màn hình (Java)
-     */
-    private void pumpOutput() {
-        try (InputStream is = prootProcess.getInputStream()) {
-            // [KỸ THUẬT LÕI]: Không dùng BufferedReader hay readLine() vì nó làm mất định dạng màu ANSI
-            // Phải đọc bằng mảng Byte thô (Raw Bytes) để giữ nguyên tốc độ và định dạng
-            byte[] buffer = new byte[2048];
-            int bytesRead;
-            while ((bytesRead = is.read(buffer)) != -1) {
-                System.out.write(buffer, 0, bytesRead);
-                System.out.flush(); // Ép xả màn hình lập tức
-            }
-        } catch (IOException e) {
-            // Luồng bị ngắt khi tiến trình kết thúc
-        }
-    }
-
-    /**
-     * Bơm dữ liệu nhập: Từ Bàn phím (Java) -> Linux
-     */
-    private void pumpInput() {
-        try (OutputStream os = prootProcess.getOutputStream()) {
-            byte[] buffer = new byte[1024];
-            int bytesRead;
-            // System.in.read() sẽ treo máy (block) chờ người dùng nhấn Enter
-            while (prootProcess.isAlive() && (bytesRead = System.in.read(buffer)) != -1) {
-                os.write(buffer, 0, bytesRead);
-                os.flush(); // Ép bơm lệnh vào Shell lập tức
-            }
-        } catch (IOException e) {
-            OutputLogger.error("Lỗi mất kết nối luồng nhập liệu: " + e.getMessage());
-        }
     }
 }

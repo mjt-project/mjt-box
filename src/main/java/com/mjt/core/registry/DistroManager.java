@@ -73,6 +73,6 @@ public class DistroManager {
         } catch (Exception e) {
             // Nuốt lỗi nếu không đọc được file
         }
-        return "DEV-BUILD"; // Fallback nếu em chạy trực tiếp code mà chưa qua build Maven
+        return "1.0.0 release";  // mjr-core version
     }
 }
