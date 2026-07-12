@@ -9,11 +9,24 @@ MJT Core là một nền tảng điều phối (Orchestrator) được viết ho
 - **Dynamic Provisioning:** Tự động tải và cấu hình hạt nhân hệ thống tại thời điểm chạy (Runtime).
 - **Stream Hijacking:** Quản trị bất đồng bộ luồng I/O (Standard Input/Output) để ngăn chặn kẹt luồng (Deadlock) trên Console.
 
-## ⚖️ Pháp lý & Ghi nhận (Acknowledgements)
-MJT Core là một lớp giao tiếp và điều phối độc lập. Trong quá trình vận hành (Runtime), nền tảng này tự động tải động (dynamic fetch) các công cụ mã nguồn mở sau để tạo dựng không gian ảo hóa:
-- **[PRoot](https://proot-me.github.io/):** Licensed under GPL-2.0.
-- **[Alpine Linux](https://alpinelinux.org/):** Mini Rootfs.
-*Tất cả quyền sở hữu trí tuệ của các công cụ trên thuộc về tác giả gốc. MJT Core không nhúng (link) hay phân phối lại các tệp nhị phân này.*
+# ⚖️ Pháp lý & Ghi nhận (Acknowledgements)
+MJT Core là một nền tảng điều phối và quản lý môi trường Linux độc lập. Trong quá trình vận hành (Runtime), hệ thống có thể tự động tải (dynamic fetch) các thành phần mã nguồn mở từ nguồn phát hành chính thức để tạo môi trường làm việc. MJT Core **không nhúng (embed), không liên kết (link), không chỉnh sửa và không phân phối lại** các thành phần này.
 
-## 📜 Giấy phép (License)
-Dự án được phân phối dưới giấy phép **GPL-3.0**. Xem tệp `LICENSE` để biết thêm chi tiết.
+Các dự án và tài nguyên được sử dụng bao gồm:
+
+| Thành phần | Giấy phép | Nguồn chính thức |
+|------------|-----------|------------------|
+| PRoot | GPL-2.0 | https://github.com/proot-me/proot |
+| Alpine Linux Mini RootFS | MIT License | https://alpinelinux.org/downloads/ |
+| Debian Minimal RootFS | Debian Free Software Guidelines (DFSG) | https://www.debian.org/ |
+| Ubuntu 22.04 Minimal RootFS | Ubuntu / Canonical Licensing | https://ubuntu.com/download/server |
+
+Toàn bộ bản quyền, nhãn hiệu, giấy phép và quyền sở hữu trí tuệ của các thành phần trên thuộc về tác giả hoặc tổ chức phát triển tương ứng. MJT Core chỉ tự động tải các thành phần này từ nguồn phát hành chính thức trong quá trình cài đặt và vận hành.
+
+---
+
+# 📜 Giấy phép (License)
+
+Mã nguồn của **MJT Core** được phát hành theo giấy phép được chỉ định trong tệp **LICENSE** của dự án.
+
+Các thành phần mã nguồn mở được MJT Core sử dụng vẫn tuân theo giấy phép riêng của từng dự án và **không bị thay đổi hoặc thay thế** bởi giấy phép của MJT Core.
