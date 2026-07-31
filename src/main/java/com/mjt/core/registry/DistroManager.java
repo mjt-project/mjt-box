@@ -73,6 +73,6 @@ public class DistroManager {
         } catch (Exception e) {
             // Nuốt lỗi nếu không đọc được file
         }
-        return "1.0.0 release";  // mjr-core version
+        return "1.0.1 release";  // mjr-core version
     }
 }

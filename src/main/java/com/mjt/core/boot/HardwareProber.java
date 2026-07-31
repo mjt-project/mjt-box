@@ -9,17 +9,16 @@ public class HardwareProber {
      * @return Chuỗi kiến trúc đã chuẩn hóa ("x86_64" hoặc "aarch64")
      */
     public static String getSystemArchitecture() {
-        // Lấy thông tin thô từ JVM
+        
         String rawArch = System.getProperty("os.arch").toLowerCase();
         String normalizedArch;
 
-        // Phân loại và Ánh xạ (Mapping)
         if (rawArch.contains("amd64") || rawArch.contains("x86_64")) {
             normalizedArch = "x86_64";
         } else if (rawArch.contains("aarch64") || rawArch.contains("arm64")) {
             normalizedArch = "aarch64";
         } else {
-            // Cơ chế phòng vệ (Fallback Mechanism) cho các chip lạ
+            // Fallback Mechanism cho các chip lạ
             OutputLogger.warning("Phát hiện kiến trúc CPU lạ: " + rawArch);
             OutputLogger.warning("Hệ thống sẽ ép buộc tải bản x86_64. Có thể xảy ra lỗi tương thích!");
             normalizedArch = "x86_64"; 

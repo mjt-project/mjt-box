@@ -20,7 +20,7 @@ public class ProotOrchestrator {
             prootExe.setExecutable(true, false);
         }
 
-        // Lấy thư mục hiện tại của Host (Trên Pterodactyl, nó chính là /home/container)
+        // Lấy thư mục hiện tại của Host
         String hostWorkspace = System.getProperty("user.dir");
 
         // ==========================================
@@ -50,7 +50,7 @@ public class ProotOrchestrator {
         List<String> command = new ArrayList<>(Arrays.asList(
                 "./proot",
                 "-0",                   
-                "-S", rootfsDir,        
+                "-r", rootfsDir,        
                 "-w", "/root",          
                 "-b", hostWorkspace + ":/workspace"
         ));
@@ -99,7 +99,7 @@ public class ProotOrchestrator {
             }
         }));
 
-        OutputLogger.success("Thâm nhập thành công! Bàn giao Terminal cho Kernel ảo...\n");
+        OutputLogger.success("Đã truy cập thành công! Bàn giao Terminal cho Kernel ảo...\n");
 
         // Treo luồng chính của Java để chờ phiên Linux kết thúc (khi người dùng gõ 'exit')
         this.prootProcess.waitFor();

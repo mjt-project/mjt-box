@@ -117,12 +117,16 @@ public class DistroProvisioner {
         String arch = HardwareProber.getSystemArchitecture();
         OutputLogger.info("Đang kết nối kho lưu trữ lõi cho CPU: " + arch);
         
-        if (arch.equals("x86_64")) {
+        if (arch.equals("x86_64") || arch.equals("amd64") || arch.equals("x64")) {
             return "https://raw.githubusercontent.com/proot-me/proot-static-build/master/static/proot-x86_64";
-        } else if (arch.equals("aarch64")) {
+        } else if (arch.equals("x86") || arch.equals("i386")) {
+            return "https://raw.githubusercontent.com/proot-me/proot-static-build/master/static/proot-x86";
+        } else if (arch.equals("aarch64") || arch.equals("arm64")) {
             return "https://raw.githubusercontent.com/proot-me/proot-static-build/master/static/proot-arm64";
-        }
-        
+        } else if (arch.equals("armv8") || arch.equals("armv7l") || arch.equals("armv6l") || arch.equals("armhf") || arch.equals("arm") || arch.equals("armv7")) {
+            return "https://raw.githubusercontent.com/proot-me/proot-static-build/master/static/proot-arm";
+        } 
+
         throw new RuntimeException("Kiến trúc CPU không được hỗ trợ: " + arch);
     }
 }
