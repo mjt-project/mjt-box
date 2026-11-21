@@ -1,4 +1,4 @@
-#!bin/bash
+#!/bin/bash
 
-cd /mnt/c/workspace/Server_testing_area/mjt-core/
-bash start.sh
+cd "$(dirname "$0")"
+java -jar server.jar "$@"

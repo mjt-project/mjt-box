@@ -18,7 +18,7 @@ public class DistroManager {
         // 1. Đọc tệp distro-registry.json từ thư mục resources
         InputStream is = DistroManager.class.getResourceAsStream("/distro-registry.json");
         if (is == null) {
-            throw new RuntimeException("Lõi lỗi: Không tìm thấy tệp distro-registry.json trong resources.");
+            throw new RuntimeException("Lỗi: Không tìm thấy tệp distro-registry.json trong resources.");
         }
         
         // Chuyển luồng byte thành chuỗi String nguyên bản
@@ -73,6 +73,6 @@ public class DistroManager {
         } catch (Exception e) {
             // Nuốt lỗi nếu không đọc được file
         }
-        return "1.0.1 release";  // mjr-core version
+        return "1.0.0";  // mjt-core version
     }
 }

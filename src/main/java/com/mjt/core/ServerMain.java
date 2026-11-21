@@ -35,7 +35,7 @@ public class ServerMain {
             System.out.println("[*] Chế độ UI chưa khả dụng. Ép buộc chạy nền Console (nogui).");
         }
 
-try {
+        try {
             File profile = new File(PROFILE_FILE);
             String targetRootfs = null;
             String targetShell = null;
@@ -61,7 +61,7 @@ try {
                     System.out.println("[+] Tìm thấy Profile hợp lệ: " + targetRootfs);
                 } else {
                     // Cảnh báo khi bị xóa trộm
-                    System.err.println(ConsoleColors.YELLOW + "[!] Phát hiện dữ liệu vật lý bị mất (Môi trường                  hoặc PRoot đã bị xóa)!" + ConsoleColors.RESET);
+                    System.err.println(ConsoleColors.YELLOW + "[!] Phát hiện dữ liệu vật lý bị mất (Môi trường hoặc PRoot đã bị xóa)!" + ConsoleColors.RESET);
                     System.err.println("[*] Đang dọn dẹp cấu hình rác và tiến hành Tự chữa lành (Self-Healing)...");
                     
                     // Xóa thẳng tay cái file profile báo cáo láo này đi

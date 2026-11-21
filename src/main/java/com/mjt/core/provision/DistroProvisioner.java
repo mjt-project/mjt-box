@@ -14,8 +14,6 @@ import java.net.http.HttpResponse;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 public class DistroProvisioner {
 
@@ -101,12 +99,29 @@ public class DistroProvisioner {
                 
         HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).GET().build();
         
-        // Đoạt quyền theo dõi luồng byte tải về
-        HttpResponse<Path> response = client.send(request, HttpResponse.BodyHandlers.ofFile(target));
+        // Tải về dạng InputStream để theo dõi tiến trình
+        HttpResponse<java.io.InputStream> response = client.send(request, HttpResponse.BodyHandlers.ofInputStream());
 
         if (response.statusCode() != 200) {
             throw new IOException("Máy chủ từ chối kết nối HTTP: " + response.statusCode());
         }
+
+        long totalBytes = response.headers().firstValueAsLong("Content-Length").orElse(-1);
+        
+        try (java.io.InputStream in = response.body();
+             java.io.OutputStream out = java.nio.file.Files.newOutputStream(target)) {
+            byte[] buffer = new byte[8192];
+            long downloadedBytes = 0;
+            int bytesRead;
+            
+            while ((bytesRead = in.read(buffer)) != -1) {
+                out.write(buffer, 0, bytesRead);
+                downloadedBytes += bytesRead;
+                OutputLogger.printProgress(taskName, downloadedBytes, totalBytes);
+            }
+        }
+        
+        System.out.println(); // Ngắt dòng sau progress bar
         OutputLogger.success("Tải hoàn tất: " + taskName);
     }
 
