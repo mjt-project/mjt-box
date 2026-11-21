@@ -7,6 +7,8 @@ import java.util.Arrays;
 
 import com.mjt.core.config.ConfigManager;
 import com.mjt.core.engine.ProotOrchestrator;
+import com.mjt.core.network.NetworkConfig;
+import com.mjt.core.network.VirtualNetworkManager;
 import com.mjt.core.provision.DistroProvisioner;
 import com.mjt.core.registry.DistroManager;
 import com.mjt.core.ui.ConsoleColors;
@@ -97,11 +99,23 @@ public class ServerMain {
                 }
 
             // ==========================================
+            // KHỞI ĐỘNG MẠNG ẢO MJT (Virtual Network Manager)
+            // ==========================================
+            NetworkConfig netConfig = NetworkConfig.load();
+            VirtualNetworkManager networkManager = new VirtualNetworkManager(netConfig);
+            networkManager.start();
+
+            // ==========================================
             // CHUYỂN GIAO QUYỀN LỰC CHO TẦNG ENGINE
             // ==========================================
             System.out.println("[+] Đang đoạt quyền luồng I/O trực tiếp...\n");
             ProotOrchestrator engine = new ProotOrchestrator();
             engine.bootEnvironment(targetRootfs, targetShell);
+
+            // ==========================================
+            // DỌN DẸP: Dừng mạng ảo khi PRoot thoát
+            // ==========================================
+            networkManager.stop();
 
         } catch (Exception e) {
             System.err.println("\n[MJT-Fatal] Lỗi hệ thống nghiêm trọng: " + e.getMessage());

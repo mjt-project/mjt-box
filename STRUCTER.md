@@ -30,5 +30,13 @@ mjt-core/
                 ├── provision/              # TẦNG 5: CUNG CẤP TÀI NGUYÊN
                 │   └── DistroProvisioner.java # Tải PRoot, Rootfs và bung nén
                 │
-                └── engine/                 # TẦNG 6: LÕI THAO TÚNG LUỒNG (IPC)
+                ├── network/                # TẦNG 6: MẠNG ẢO (Virtual Network Manager)
+                │   ├── VirtualNetworkManager.java # Bộ điều phối mạng ảo tổng
+                │   ├── NetworkConfig.java   # Đọc/ghi cấu hình mạng (network-config.json)
+                │   ├── PortMapping.java     # Lớp dữ liệu ánh xạ cổng ảo
+                │   ├── TcpForwarder.java    # Chuyển tiếp TCP (cổng → cổng)
+                │   ├── UdpForwarder.java    # Chuyển tiếp UDP (cổng → cổng)
+                │   └── MinecraftRouter.java # Định tuyến MC Protocol (nhiều server/1 cổng)
+                │
+                └── engine/                 # TẦNG 7: LÕI THAO TÚNG LUỒNG (IPC)
                     └── ProotOrchestrator.java # Chạy ngầm PRoot với đường dẫn Rootfs động
