@@ -1,5 +1,7 @@
 package com.mjt.core.network;
 
+import com.mjt.core.network.multiplexer.MultiplexRule;
+import com.mjt.core.network.multiplexer.ProtocolType;
 import com.mjt.core.ui.OutputLogger;
 
 import java.io.File;
@@ -22,12 +24,20 @@ public class NetworkConfig {
 
     private static final String CONFIG_FILE = "network-config.json";
 
-    // ===== Cấu hình Port Forwarding (Chuyển tiếp cổng) =====
+    // ===== Cấu hình chung =====
     private boolean enabled;
     private String bindAddress;
+
+    // ===== CHẾ ĐỘ 1: SMART MULTIPLEXER (Dùng chung 1 Port duy nhất) =====
+    private boolean smartMultiplexerEnabled;
+    private int smartMultiplexerPort;
+    private List<MultiplexRule> multiplexRules;
+    private List<Integer> fallbackChain;
+
+    // ===== CHẾ ĐỘ 2: PORT FORWARDING (Chuyển tiếp nhiều cổng riêng biệt) =====
     private List<PortMapping> mappings;
 
-    // ===== Cấu hình Minecraft Router (Bộ định tuyến MC) =====
+    // ===== CHẾ ĐỘ 3: MINECRAFT ROUTER RIÊNG BIỆT =====
     private boolean minecraftRouterEnabled;
     private int minecraftRouterPort;
     private Map<String, Integer> minecraftRoutes; // hostname → target_port
@@ -36,9 +46,19 @@ public class NetworkConfig {
     public NetworkConfig() {
         this.enabled = false;
         this.bindAddress = "0.0.0.0";
+
+        // Mặc định Smart Multiplexer
+        this.smartMultiplexerEnabled = true;
+        this.smartMultiplexerPort = 20002;
+        this.multiplexRules = new ArrayList<>();
+        this.fallbackChain = new ArrayList<>();
+
+        // Mặc định Port Forwarding
         this.mappings = new ArrayList<>();
+
+        // Mặc định Minecraft Router
         this.minecraftRouterEnabled = false;
-        this.minecraftRouterPort = 20002;
+        this.minecraftRouterPort = 25000;
         this.minecraftRoutes = new LinkedHashMap<>();
         this.minecraftDefaultPort = 25565;
     }
@@ -71,31 +91,109 @@ public class NetworkConfig {
     private static NetworkConfig parse(String json) {
         NetworkConfig config = new NetworkConfig();
 
-        // Parse trường enabled cấp cao nhất (trước section port_forwarding)
+        int muxIndex = json.indexOf("\"smart_multiplexer\"");
         int pfIndex = json.indexOf("\"port_forwarding\"");
         int mcIndex = json.indexOf("\"minecraft_router\"");
 
-        // Tìm enabled ở đầu file (top-level)
-        String topSection = pfIndex > 0 ? json.substring(0, pfIndex) : json;
+        // Tìm enabled và bind_address ở đầu file (top-level)
+        int firstSection = json.length();
+        if (muxIndex > 0) firstSection = Math.min(firstSection, muxIndex);
+        if (pfIndex > 0) firstSection = Math.min(firstSection, pfIndex);
+        if (mcIndex > 0) firstSection = Math.min(firstSection, mcIndex);
+
+        String topSection = json.substring(0, firstSection);
         Matcher enabledMatcher = Pattern.compile("\"enabled\"\\s*:\\s*(true|false)").matcher(topSection);
         if (enabledMatcher.find()) {
             config.enabled = Boolean.parseBoolean(enabledMatcher.group(1));
         }
 
-        // Parse bind_address
-        Matcher bindMatcher = Pattern.compile("\"bind_address\"\\s*:\\s*\"([^\"]+)\"").matcher(json);
+        Matcher bindMatcher = Pattern.compile("\"bind_address\"\\s*:\\s*\"([^\"]+)\"").matcher(topSection);
         if (bindMatcher.find()) {
             config.bindAddress = bindMatcher.group(1);
         }
 
-        // ===== Parse Port Forwarding Mappings =====
-        if (pfIndex >= 0) {
-            String pfEnd;
-            if (mcIndex > pfIndex) {
-                pfEnd = json.substring(pfIndex, mcIndex);
-            } else {
-                pfEnd = json.substring(pfIndex);
+        // ===== 1. Parse Smart Multiplexer =====
+        if (muxIndex >= 0) {
+            int muxEnd = json.length();
+            if (pfIndex > muxIndex) muxEnd = Math.min(muxEnd, pfIndex);
+            if (mcIndex > muxIndex) muxEnd = Math.min(muxEnd, mcIndex);
+            String muxSection = json.substring(muxIndex, muxEnd);
+
+            Matcher muxEn = Pattern.compile("\"enabled\"\\s*:\\s*(true|false)").matcher(muxSection);
+            if (muxEn.find()) {
+                config.smartMultiplexerEnabled = Boolean.parseBoolean(muxEn.group(1));
             }
+
+            Matcher muxPort = Pattern.compile("\"listen_port\"\\s*:\\s*(\\d+)").matcher(muxSection);
+            if (muxPort.find()) {
+                config.smartMultiplexerPort = Integer.parseInt(muxPort.group(1));
+            }
+
+            // Parse fallback_chain
+            int fbStart = muxSection.indexOf("\"fallback_chain\"");
+            if (fbStart >= 0) {
+                int arrOpen = muxSection.indexOf('[', fbStart);
+                int arrClose = muxSection.indexOf(']', arrOpen);
+                if (arrOpen >= 0 && arrClose > arrOpen) {
+                    String fbArr = muxSection.substring(arrOpen + 1, arrClose);
+                    Matcher numMatcher = Pattern.compile("\\d+").matcher(fbArr);
+                    while (numMatcher.find()) {
+                        config.fallbackChain.add(Integer.parseInt(numMatcher.group()));
+                    }
+                }
+            }
+
+            // Parse priority_rules
+            String ruleBlockRegex =
+                "\\{\\s*\"name\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"protocol\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"target_port\"\\s*:\\s*(\\d+)[^}]*?\"enabled\"\\s*:\\s*(true|false)([^}]*)\\}";
+            Matcher ruleMatcher = Pattern.compile(ruleBlockRegex, Pattern.DOTALL).matcher(muxSection);
+
+            while (ruleMatcher.find()) {
+                String rName = ruleMatcher.group(1);
+                String rProtoStr = ruleMatcher.group(2).trim().toUpperCase();
+                int rPort = Integer.parseInt(ruleMatcher.group(3));
+                boolean rEnabled = Boolean.parseBoolean(ruleMatcher.group(4));
+                String rExtra = ruleMatcher.group(5);
+
+                ProtocolType pType = ProtocolType.UNKNOWN;
+                try {
+                    pType = ProtocolType.valueOf(rProtoStr);
+                } catch (IllegalArgumentException e) {
+                    if (rProtoStr.contains("MINECRAFT") || rProtoStr.contains("MC")) pType = ProtocolType.MINECRAFT;
+                    else if (rProtoStr.contains("HTTP") || rProtoStr.contains("WEB")) pType = ProtocolType.HTTP;
+                    else if (rProtoStr.contains("SSH")) pType = ProtocolType.SSH;
+                    else if (rProtoStr.contains("TLS") || rProtoStr.contains("HTTPS")) pType = ProtocolType.HTTPS_TLS;
+                }
+
+                MultiplexRule rule = new MultiplexRule(rName, pType, rPort, rEnabled);
+
+                // Parse host_routes (nếu có)
+                if (rExtra != null && rExtra.contains("\"host_routes\"")) {
+                    Matcher hrMatcher = Pattern.compile("\"host\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"target_port\"\\s*:\\s*(\\d+)")
+                        .matcher(rExtra);
+                    while (hrMatcher.find()) {
+                        rule.addHostRoute(hrMatcher.group(1), Integer.parseInt(hrMatcher.group(2)));
+                    }
+                }
+
+                // Parse path_routes (nếu có)
+                if (rExtra != null && rExtra.contains("\"path_routes\"")) {
+                    Matcher prMatcher = Pattern.compile("\"path\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"target_port\"\\s*:\\s*(\\d+)")
+                        .matcher(rExtra);
+                    while (prMatcher.find()) {
+                        rule.addPathRoute(prMatcher.group(1), Integer.parseInt(prMatcher.group(2)));
+                    }
+                }
+
+                config.multiplexRules.add(rule);
+            }
+        }
+
+        // ===== 2. Parse Port Forwarding Mappings =====
+        if (pfIndex >= 0) {
+            int pfEnd = json.length();
+            if (mcIndex > pfIndex) pfEnd = Math.min(pfEnd, mcIndex);
+            String pfSection = json.substring(pfIndex, pfEnd);
 
             String mappingRegex =
                 "\"name\"\\s*:\\s*\"([^\"]+)\".*?" +
@@ -104,7 +202,7 @@ public class NetworkConfig {
                 "\"protocol\"\\s*:\\s*\"([^\"]+)\".*?" +
                 "\"enabled\"\\s*:\\s*(true|false)";
 
-            Matcher mMatcher = Pattern.compile(mappingRegex, Pattern.DOTALL).matcher(pfEnd);
+            Matcher mMatcher = Pattern.compile(mappingRegex, Pattern.DOTALL).matcher(pfSection);
             while (mMatcher.find()) {
                 config.mappings.add(new PortMapping(
                     mMatcher.group(1),
@@ -116,7 +214,7 @@ public class NetworkConfig {
             }
         }
 
-        // ===== Parse Minecraft Router =====
+        // ===== 3. Parse Minecraft Router =====
         if (mcIndex >= 0) {
             String mcSection = json.substring(mcIndex);
 
@@ -135,7 +233,6 @@ public class NetworkConfig {
                 config.minecraftDefaultPort = Integer.parseInt(mcDef.group(1));
             }
 
-            // Parse routes
             String routeRegex = "\"hostname\"\\s*:\\s*\"([^\"]+)\".*?\"target_port\"\\s*:\\s*(\\d+)";
             Matcher rMatcher = Pattern.compile(routeRegex, Pattern.DOTALL).matcher(mcSection);
             while (rMatcher.find()) {
@@ -152,26 +249,71 @@ public class NetworkConfig {
     public static void createDefaultConfig() {
         String defaultJson =
             "{\n" +
-            "  // =============================================\n" +
-            "  // MJT VIRTUAL NETWORK MANAGER - CONFIGURATION\n" +
-            "  // =============================================\n" +
+            "  // =========================================================================\n" +
+            "  // MJT VIRTUAL NETWORK MANAGER - CẤU HÌNH MẠNG ẢO ĐA GIAO THỨC\n" +
+            "  // =========================================================================\n" +
             "\n" +
-            "  \"enabled\": false,\n" +
+            "  \"enabled\": true,\n" +
             "  \"bind_address\": \"0.0.0.0\",\n" +
             "\n" +
-            "  // ===== CHẾ ĐỘ 1: CHUYỂN TIẾP CỔNG (Port Forwarding) =====\n" +
-            "  // Mỗi mapping tạo một cổng lắng nghe riêng, chuyển tiếp TCP/UDP\n" +
-            "  // đến cổng nội bộ bên trong môi trường Linux.\n" +
+            "  // =========================================================================\n" +
+            "  // CHẾ ĐỘ A: SMART MULTIPLEXER (DÙNG CHUNG 1 CỔNG DUY NHẤT - VD: 20002)\n" +
+            "  // Tự động nhận diện giao thức và thử theo CHUỖI ƯU TIÊN (Priority Chain):\n" +
+            "  //   - Trình duyệt truy cập 1.2.3.4:20002 -> Nhận diện HTTP -> vào Web/VSCode\n" +
+            "  //   - Minecraft kết nối 1.2.3.4:20002 -> Nhận diện MC -> vào Minecraft Server\n" +
+            "  //   - Nếu dịch vụ ưu tiên tắt -> tự động thử cổng tiếp theo trong chuỗi fallback\n" +
+            "  // =========================================================================\n" +
+            "  \"smart_multiplexer\": {\n" +
+            "    \"enabled\": true,\n" +
+            "    \"listen_port\": 20002,\n" +
+            "    \"priority_rules\": [\n" +
+            "      {\n" +
+            "        \"name\": \"minecraft-server\",\n" +
+            "        \"protocol\": \"MINECRAFT\",\n" +
+            "        \"target_port\": 25565,\n" +
+            "        \"enabled\": true,\n" +
+            "        \"host_routes\": [\n" +
+            "          { \"host\": \"mc1\", \"target_port\": 25565 },\n" +
+            "          { \"host\": \"mc2\", \"target_port\": 25566 }\n" +
+            "        ]\n" +
+            "      },\n" +
+            "      {\n" +
+            "        \"name\": \"web-and-vscode\",\n" +
+            "        \"protocol\": \"HTTP\",\n" +
+            "        \"target_port\": 8080,\n" +
+            "        \"enabled\": true,\n" +
+            "        \"host_routes\": [\n" +
+            "          { \"host\": \"web\", \"target_port\": 8080 },\n" +
+            "          { \"host\": \"code\", \"target_port\": 8443 }\n" +
+            "        ],\n" +
+            "        \"path_routes\": [\n" +
+            "          { \"path\": \"/vscode\", \"target_port\": 8443 }\n" +
+            "        ]\n" +
+            "      },\n" +
+            "      {\n" +
+            "        \"name\": \"ssh-service\",\n" +
+            "        \"protocol\": \"SSH\",\n" +
+            "        \"target_port\": 2222,\n" +
+            "        \"enabled\": false\n" +
+            "      }\n" +
+            "    ],\n" +
+            "    // Danh sách cổng nội bộ thử nghiệm lần lượt khi dịch vụ chính không phản hồi:\n" +
+            "    \"fallback_chain\": [25565, 8080, 8443, 2222]\n" +
+            "  },\n" +
+            "\n" +
+            "  // =========================================================================\n" +
+            "  // CHẾ ĐỘ B: PORT FORWARDING RIÊNG BIỆT (Khi bạn có NHIỀU CỔNG PUBLIC)\n" +
+            "  // =========================================================================\n" +
             "  \"port_forwarding\": [\n" +
             "    {\n" +
-            "      \"name\": \"minecraft-survival\",\n" +
+            "      \"name\": \"minecraft-direct\",\n" +
             "      \"public_port\": 20002,\n" +
             "      \"internal_port\": 25565,\n" +
             "      \"protocol\": \"tcp\",\n" +
-            "      \"enabled\": true\n" +
+            "      \"enabled\": false\n" +
             "    },\n" +
             "    {\n" +
-            "      \"name\": \"web-panel\",\n" +
+            "      \"name\": \"web-direct\",\n" +
             "      \"public_port\": 20003,\n" +
             "      \"internal_port\": 8080,\n" +
             "      \"protocol\": \"tcp\",\n" +
@@ -179,18 +321,16 @@ public class NetworkConfig {
             "    }\n" +
             "  ],\n" +
             "\n" +
-            "  // ===== CHẾ ĐỘ 2: ĐỊNH TUYẾN MINECRAFT (Minecraft Virtual Host Router) =====\n" +
-            "  // Cho phép chạy NHIỀU server Minecraft trên MỘT cổng công khai duy nhất.\n" +
-            "  // Hệ thống đọc gói Handshake của MC Protocol để xác định server đích.\n" +
-            "  // Người chơi chỉ cần gõ: mc1.1.2.3.4:20002 hoặc mc2.1.2.3.4:20002\n" +
+            "  // =========================================================================\n" +
+            "  // CHẾ ĐỘ C: MINECRAFT ROUTER ĐỘC LẬP\n" +
+            "  // =========================================================================\n" +
             "  \"minecraft_router\": {\n" +
             "    \"enabled\": false,\n" +
             "    \"listen_port\": 25000,\n" +
             "    \"default_port\": 25565,\n" +
             "    \"routes\": [\n" +
             "      { \"hostname\": \"mc1\", \"target_port\": 25565 },\n" +
-            "      { \"hostname\": \"mc2\", \"target_port\": 25566 },\n" +
-            "      { \"hostname\": \"creative\", \"target_port\": 25567 }\n" +
+            "      { \"hostname\": \"mc2\", \"target_port\": 25566 }\n" +
             "    ]\n" +
             "  }\n" +
             "}\n";
@@ -209,6 +349,12 @@ public class NetworkConfig {
 
     public boolean isEnabled() { return enabled; }
     public String getBindAddress() { return bindAddress; }
+
+    public boolean isSmartMultiplexerEnabled() { return smartMultiplexerEnabled; }
+    public int getSmartMultiplexerPort() { return smartMultiplexerPort; }
+    public List<MultiplexRule> getMultiplexRules() { return multiplexRules; }
+    public List<Integer> getFallbackChain() { return fallbackChain; }
+
     public List<PortMapping> getMappings() { return mappings; }
     public boolean isMinecraftRouterEnabled() { return minecraftRouterEnabled; }
     public int getMinecraftRouterPort() { return minecraftRouterPort; }

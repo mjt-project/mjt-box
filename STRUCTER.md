@@ -36,7 +36,13 @@ mjt-core/
                 │   ├── PortMapping.java     # Lớp dữ liệu ánh xạ cổng ảo
                 │   ├── TcpForwarder.java    # Chuyển tiếp TCP (cổng → cổng)
                 │   ├── UdpForwarder.java    # Chuyển tiếp UDP (cổng → cổng)
-                │   └── MinecraftRouter.java # Định tuyến MC Protocol (nhiều server/1 cổng)
+                │   ├── MinecraftRouter.java # Định tuyến MC Protocol (nhiều server/1 cổng)
+                │   │
+                │   └── multiplexer/         # [MỚI] BỘ DỒN KÊNH ĐA GIAO THỨC TRÊN 1 PORT
+                │       ├── SmartMultiplexer.java # Lắng nghe 1 cổng, dò tìm và thử theo chuỗi ưu tiên
+                │       ├── ProtocolSniffer.java  # Nhận diện HTTP, Minecraft, SSH, TLS
+                │       ├── MultiplexRule.java    # Quy tắc định tuyến theo giao thức/host/path
+                │       └── ProtocolType.java     # Định danh loại giao thức
                 │
                 └── engine/                 # TẦNG 7: LÕI THAO TÚNG LUỒNG (IPC)
                     └── ProotOrchestrator.java # Chạy ngầm PRoot với đường dẫn Rootfs động
