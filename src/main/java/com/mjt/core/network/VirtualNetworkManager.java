@@ -11,14 +11,16 @@ import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Bộ quản lý mạng ảo MJT v3 (MJT Virtual Network Manager).
+ * Bộ quản lý mạng ảo MJT v4 (MJT Virtual Network Manager).
  *
  * Chức năng chính:
- *   1. Smart Multiplexer v3: Kiểm tra xác minh chủ động từng tầng theo mỗi session
- *      (SSH 2s → HTTP/HTTPS → Other Round-Robin + Mini AI Offline/Online).
- *   2. Port Forwarding: Chuyển tiếp cổng TCP/UDP riêng biệt.
- *   3. Minecraft Router: Định tuyến Java (TCP) & Bedrock/MCPE (UDP / TCP+UDP).
- *   4. Hot-Reload: Tự động theo dõi network-config.json và cập nhật realtime.
+ *   1. Smart Multiplexer v4: Điều phối TCP + UDP theo cấu hình phân cấp:
+ *      - Tầng 1 (service): ssh, sftp, ftp (chờ phản hồi 2 giây)
+ *      - Tầng 2 (tcp.web_port): path routing + group + web_main + listen_port=auto
+ *      - Tầng 3 (tcp other): Round-Robin + Mini AI (minecraft_pc, minecraft_pe...)
+ *      - Luồng UDP: tự động mở cùng cổng khi mục "udp" có dịch vụ bật
+ *   2. Port Forwarding & Minecraft Router (tương thích ngược).
+ *   3. Hot-Reload: Tự động theo dõi network-config.json và cập nhật realtime.
  */
 public class VirtualNetworkManager {
 
@@ -45,13 +47,13 @@ public class VirtualNetworkManager {
 
         System.out.println();
         System.out.println(ConsoleColors.CYAN + "==================================================" + ConsoleColors.RESET);
-        System.out.println(ConsoleColors.CYAN + "       MJT Virtual Network Manager v3             " + ConsoleColors.RESET);
+        System.out.println(ConsoleColors.CYAN + "       MJT Virtual Network Manager v4             " + ConsoleColors.RESET);
         System.out.println(ConsoleColors.CYAN + "==================================================" + ConsoleColors.RESET);
 
         int successCount = 0;
         int failCount = 0;
 
-        // ===== 1. KHỞI ĐỘNG MINI AI + SMART MULTIPLEXER v3 =====
+        // ===== 1. KHỞI ĐỘNG MINI AI + SMART MULTIPLEXER v4 =====
         if (config.isSmartMultiplexerEnabled()) {
             this.miniAi = new MiniAiEngine(
                 config.isAiEnabled(),
@@ -70,13 +72,16 @@ public class VirtualNetworkManager {
                     "PrimaryMux",
                     config.getSmartMultiplexerPort(),
                     config.getBindAddress(),
-                    config.getWebPorts(),
-                    config.getShellPorts(),
-                    config.getOtherPorts(),
+                    config.getShellServices(),
+                    config.getTcpWebServices(),
+                    config.getTcpOtherServices(),
+                    config.getUdpWebServices(),
+                    config.getUdpOtherServices(),
                     config.getSshCheckTimeoutMs(),
                     config.getWebCheckTimeoutMs(),
                     miniAi
                 );
+                smartMultiplexer.setPublicEndpointOverride(config.getPublicHost(), config.getPublicPort());
                 smartMultiplexer.start();
                 successCount++;
             } catch (IOException e) {
@@ -86,13 +91,12 @@ public class VirtualNetworkManager {
             }
         }
 
-        // ===== 2. KHỞI ĐỘNG PORT FORWARDING (NẾU CÓ) =====
+        // ===== 2. PORT FORWARDING ĐỘC LẬP (NẾU CÓ) =====
         for (PortMapping mapping : config.getMappings()) {
             if (!mapping.isEnabled()) {
                 OutputLogger.info("Bỏ qua mapping đã vô hiệu hóa: " + mapping.getName());
                 continue;
             }
-
             if (mapping.isTcp()) {
                 try {
                     TcpForwarder tcp = new TcpForwarder(
@@ -110,7 +114,6 @@ public class VirtualNetworkManager {
                     failCount++;
                 }
             }
-
             if (mapping.isUdp()) {
                 try {
                     UdpForwarder udp = new UdpForwarder(
@@ -130,7 +133,7 @@ public class VirtualNetworkManager {
             }
         }
 
-        // ===== 3. KHỞI ĐỘNG MINECRAFT ROUTER (TCP JAVA / UDP MCPE / BOTH) =====
+        // ===== 3. MINECRAFT ROUTER RIÊNG BIỆT (NẾU BẬT Ở CONFIG CŨ) =====
         if (config.isMinecraftRouterEnabled()) {
             if (startMinecraftRouter(config)) {
                 successCount++;
@@ -161,11 +164,19 @@ public class VirtualNetworkManager {
     private boolean startMinecraftRouter(NetworkConfig cfg) {
         int muxPort = (smartMultiplexer != null && smartMultiplexer.isRunning())
                 ? smartMultiplexer.getActualBoundPort() : -1;
+        // Nếu SmartMultiplexer đã mở UDP trên cùng cổng, bỏ qua mở trùng UDP
+        String effectiveType = cfg.getMinecraftRouterType();
+        if (smartMultiplexer != null && smartMultiplexer.isUdpActive()
+                && cfg.getMinecraftRouterPort() == smartMultiplexer.getActualBoundPort()
+                && effectiveType.contains("udp")) {
+            OutputLogger.info("MC Router: Luồng UDP trên cổng " + muxPort + " đã do SmartMultiplexer [udp] đảm nhiệm.");
+            return true;
+        }
         try {
             this.minecraftRouter = new MinecraftRouter(
                 cfg.getMinecraftRouterPort(),
                 cfg.getBindAddress(),
-                cfg.getMinecraftRouterType(),
+                effectiveType,
                 cfg.getMinecraftRoutes(),
                 cfg.getMinecraftUdpTargets(),
                 cfg.getMinecraftDefaultPort(),
@@ -238,16 +249,18 @@ public class VirtualNetworkManager {
             }
 
             if (smartMultiplexer != null && smartMultiplexer.isRunning()) {
-                smartMultiplexer.updateConfig(
-                    newConfig.getWebPorts(),
-                    newConfig.getShellPorts(),
-                    newConfig.getOtherPorts(),
+                smartMultiplexer.setPublicEndpointOverride(newConfig.getPublicHost(), newConfig.getPublicPort());
+                smartMultiplexer.updateEndpoints(
+                    newConfig.getShellServices(),
+                    newConfig.getTcpWebServices(),
+                    newConfig.getTcpOtherServices(),
+                    newConfig.getUdpWebServices(),
+                    newConfig.getUdpOtherServices(),
                     newConfig.getSshCheckTimeoutMs(),
                     newConfig.getWebCheckTimeoutMs()
                 );
             }
 
-            // Hot-Reload cho Minecraft Router (bật/tắt/đổi type/đổi routes)
             if (newConfig.isMinecraftRouterEnabled()) {
                 if (minecraftRouter != null && minecraftRouter.isRunning()) {
                     if (!newConfig.getMinecraftRouterType().equals(minecraftRouter.getRouterType())) {
@@ -281,23 +294,17 @@ public class VirtualNetworkManager {
         OutputLogger.info("Đang dừng hệ thống mạng ảo MJT...");
 
         hotReloadRunning = false;
-        if (hotReloadThread != null) {
-            hotReloadThread.interrupt();
-        }
+        if (hotReloadThread != null) hotReloadThread.interrupt();
 
         if (smartMultiplexer != null) {
             smartMultiplexer.stop();
             smartMultiplexer = null;
         }
 
-        for (TcpForwarder tcp : tcpForwarders) {
-            tcp.stop();
-        }
+        for (TcpForwarder tcp : tcpForwarders) tcp.stop();
         tcpForwarders.clear();
 
-        for (UdpForwarder udp : udpForwarders) {
-            udp.stop();
-        }
+        for (UdpForwarder udp : udpForwarders) udp.stop();
         udpForwarders.clear();
 
         if (minecraftRouter != null) {

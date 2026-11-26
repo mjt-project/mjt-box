@@ -1,5 +1,6 @@
 package com.mjt.core.network.multiplexer;
 
+import com.mjt.core.network.ServiceEndpoint;
 import com.mjt.core.ui.OutputLogger;
 
 import java.io.BufferedReader;
@@ -304,9 +305,66 @@ public class MiniAiEngine {
     // ==========================================
 
     /**
-     * Sắp xếp lại danh sách Round-Robin một cách thích ứng:
-     * Giữ nguyên thứ tự xoay vòng cho tất cả cổng khỏe/chưa rõ,
-     * chỉ đẩy các cổng đã bị phạt nặng (Q <= -1.5 trong thời gian gần) xuống cuối danh sách thử.
+     * Sắp xếp danh sách dịch vụ Round-Robin cho Tầng 3:
+     *   1. Ưu tiên dịch vụ có tên/cổng khớp ngữ nghĩa với loại gói tin AI vừa nhận diện (vd MCPE_NETHERNET → minecraft_pe)
+     *   2. Giữ nguyên xoay vòng Round-Robin cho nhóm cùng độ phù hợp
+     *   3. Đẩy các cổng bị phạt Q-Score nặng xuống cuối (trừ khi toàn bộ đều bị phạt)
+     */
+    public List<ServiceEndpoint> applyEndpointOrder(AiClassification aiClass,
+                                                    List<ServiceEndpoint> rotatedEndpoints) {
+        if (rotatedEndpoints == null || rotatedEndpoints.size() <= 1) {
+            return rotatedEndpoints != null ? new ArrayList<>(rotatedEndpoints) : Collections.emptyList();
+        }
+        if (!enabled) {
+            return new ArrayList<>(rotatedEndpoints);
+        }
+
+        long now = System.currentTimeMillis();
+        String label = aiClass != null ? aiClass.label : "UNKNOWN_BINARY";
+
+        List<ServiceEndpoint> preferred = new ArrayList<>();
+        List<ServiceEndpoint> neutral = new ArrayList<>();
+        List<ServiceEndpoint> penalized = new ArrayList<>();
+
+        for (ServiceEndpoint ep : rotatedEndpoints) {
+            PortExperience exp = getDecayedExperience(label, ep.getPort(), now);
+            if (exp != null && exp.qScore <= DEMOTE_THRESHOLD) {
+                penalized.add(ep);
+            } else if (matchesEndpointAffinity(label, ep)) {
+                preferred.add(ep);
+            } else {
+                neutral.add(ep);
+            }
+        }
+
+        if (preferred.isEmpty() && neutral.isEmpty()) {
+            return new ArrayList<>(rotatedEndpoints);
+        }
+
+        List<ServiceEndpoint> result = new ArrayList<>(rotatedEndpoints.size());
+        result.addAll(preferred);
+        result.addAll(neutral);
+        result.addAll(penalized);
+        return result;
+    }
+
+    private boolean matchesEndpointAffinity(String aiLabel, ServiceEndpoint ep) {
+        String name = ep.getName().toLowerCase(Locale.ROOT);
+        int port = ep.getPort();
+        if ("MCPE_NETHERNET".equals(aiLabel)) {
+            return name.contains("pe") || name.contains("bedrock") || name.contains("nethernet")
+                    || port == 19132 || port == 19133;
+        }
+        if ("MINECRAFT_PING".equals(aiLabel) || "MINECRAFT_LOGIN".equals(aiLabel)
+                || "MINECRAFT_JAVA".equals(aiLabel) || "MINECRAFT_LEGACY".equals(aiLabel)) {
+            return name.contains("pc") || name.contains("java")
+                    || (port >= 25565 && port <= 25575);
+        }
+        return false;
+    }
+
+    /**
+     * Sắp xếp lại danh sách cổng Round-Robin (tương thích ngược theo danh sách int)
      */
     public List<Integer> applyAdaptiveOrder(String protocolLabel, List<Integer> roundRobinPorts) {
         if (!enabled || roundRobinPorts == null || roundRobinPorts.size() <= 1) {

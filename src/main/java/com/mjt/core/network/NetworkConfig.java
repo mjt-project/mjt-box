@@ -10,53 +10,56 @@ import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
-import java.util.regex.Matcher;
-import java.util.regex.Pattern;
 
 /**
- * Quản lý cấu hình mạng ảo MJT v3.
+ * Quản lý cấu hình mạng ảo MJT v4.
  *
- * Cấu trúc config (network-config.json):
- *   - 3 nhóm cổng tách biệt: web_ports, shell_ports, other_ports
- *   - Thời gian xác minh: ssh_check_timeout_ms (2000), web_check_timeout_ms (2500)
- *   - Cấu hình AI mini (ai_assistant): Offline mặc định, có thể bật thêm Online fallback miễn phí
- *   - Hot-Reload: Tự động cập nhật config khi file thay đổi
+ * Cấu trúc phân tầng rõ ràng:
+ *   - smart_multiplexer: Cổng lắng nghe chung (TCP + UDP) & timeout kiểm tra
+ *   - service: Tầng 1 — ssh, sftp, ftp (có ip + listen_port riêng)
+ *   - ai_assistant: Mini AI Offline (100% miễn phí) + Online fallback tùy chọn
+ *   - tcp: Tầng 2 (web_port với web_main/group/group_member/path/auto) + Tầng 3 (minecraft_pc, minecraft_pe, ...)
+ *   - udp: Dịch vụ UDP (web_port QUIC, minecraft_pe 19132, ...) chạy song song trên cổng Multiplexer
+ *
+ * Vẫn giữ tương thích ngược với các cấu hình cũ (web_ports/shell_ports/other_ports, port_forwarding, minecraft_router).
  */
 public class NetworkConfig {
 
     private static final String CONFIG_FILE = "./network-config.json";
-    private static final String[] SECTION_KEYS = {
-        "\"smart_multiplexer\"", "\"ai_assistant\"", "\"port_forwarding\"", "\"minecraft_router\""
-    };
 
     // ===== Cấu hình chung =====
     private boolean enabled;
     private String bindAddress;
     private boolean autoReload;
 
-    // ===== SMART MULTIPLEXER v3 =====
+    // ===== SMART MULTIPLEXER =====
     private boolean smartMultiplexerEnabled;
     private int smartMultiplexerPort;
+    private String publicHost;
+    private int publicPort;
     private int sshCheckTimeoutMs;
     private int webCheckTimeoutMs;
-    private List<Integer> webPorts;    // Tầng 2: HTTP, HTTPS, WebSocket
-    private List<Integer> shellPorts;  // Tầng 1: SSH, SFTP, FTP
-    private List<Integer> otherPorts;  // Tầng 3: Minecraft, game, dịch vụ khác
 
-    // ===== MINI AI ASSISTANT (Offline mặc định + Optional Online) =====
+    // ===== NHÓM DỊCH VỤ PHÂN CẤP MỚI =====
+    private List<ServiceEndpoint> shellServices;     // service.ssh, sftp, ftp...
+    private List<ServiceEndpoint> tcpWebServices;    // tcp.web_port.*
+    private List<ServiceEndpoint> tcpOtherServices;  // tcp.minecraft_pc, minecraft_pe...
+    private List<ServiceEndpoint> udpWebServices;    // udp.web_port.*
+    private List<ServiceEndpoint> udpOtherServices;  // udp.minecraft_pe, ...
+
+    // ===== MINI AI ASSISTANT =====
     private boolean aiEnabled;
     private boolean aiOnlineEnabled;
     private String aiOnlineApiUrl;
     private String aiOnlineApiKey;
     private String aiOnlineModel;
 
-    // ===== PORT FORWARDING =====
+    // ===== TƯƠNG THÍCH NGƯỢC =====
     private List<PortMapping> mappings;
-
-    // ===== MINECRAFT ROUTER =====
     private boolean minecraftRouterEnabled;
-    private String minecraftRouterType; // "tcp", "udp", hoặc "both" ("tcp/udp")
+    private String minecraftRouterType;
     private int minecraftRouterPort;
     private Map<String, Integer> minecraftRoutes;
     private List<Integer> minecraftUdpTargets;
@@ -69,11 +72,16 @@ public class NetworkConfig {
 
         this.smartMultiplexerEnabled = true;
         this.smartMultiplexerPort = 25565;
+        this.publicHost = "auto";
+        this.publicPort = -1;
         this.sshCheckTimeoutMs = 2000;
         this.webCheckTimeoutMs = 2500;
-        this.webPorts = new ArrayList<>();
-        this.shellPorts = new ArrayList<>();
-        this.otherPorts = new ArrayList<>();
+
+        this.shellServices = new ArrayList<>();
+        this.tcpWebServices = new ArrayList<>();
+        this.tcpOtherServices = new ArrayList<>();
+        this.udpWebServices = new ArrayList<>();
+        this.udpOtherServices = new ArrayList<>();
 
         this.aiEnabled = true;
         this.aiOnlineEnabled = false;
@@ -82,7 +90,6 @@ public class NetworkConfig {
         this.aiOnlineModel = "gpt-4o-mini";
 
         this.mappings = new ArrayList<>();
-
         this.minecraftRouterEnabled = false;
         this.minecraftRouterType = "tcp";
         this.minecraftRouterPort = 25000;
@@ -97,9 +104,13 @@ public class NetworkConfig {
         if (!configFile.exists()) {
             OutputLogger.warning("Không tìm thấy tệp cấu hình mạng. Đang khởi tạo " + CONFIG_FILE + "...");
             createDefaultConfig();
-            return new NetworkConfig();
+            return loadFromExistingFile(configFile);
         }
 
+        return loadFromExistingFile(configFile);
+    }
+
+    private static NetworkConfig loadFromExistingFile(File configFile) {
         try {
             String json = new String(Files.readAllBytes(configFile.toPath()), StandardCharsets.UTF_8);
             return parse(json);
@@ -114,109 +125,122 @@ public class NetworkConfig {
     }
 
     // ==========================================
-    // PHÂN TÍCH JSON BẰNG REGEX (Zero-Dependency)
+    // PHÂN TÍCH JSON CÓ CẤU TRÚC
     // ==========================================
 
     private static NetworkConfig parse(String rawJson) {
-        String json = rawJson.replaceAll("(?m)^\\s*//.*$", "")
-                .replaceAll("/\\*.*?\\*/", "");
-
+        Map<String, Object> root = SimpleJsonParser.parseObject(rawJson);
         NetworkConfig config = new NetworkConfig();
 
-        // Top-level trước khối đầu tiên
-        int firstSection = json.length();
-        for (String key : SECTION_KEYS) {
-            int idx = json.indexOf(key);
-            if (idx > 0) {
-                firstSection = Math.min(firstSection, idx);
+        config.enabled = getBool(root, "enabled", config.enabled);
+        config.bindAddress = getStr(root, "bind_address", config.bindAddress);
+        config.autoReload = getBool(root, "auto_reload", config.autoReload);
+
+        // ===== 1. Smart Multiplexer =====
+        Map<String, Object> muxMap = getMap(root, "smart_multiplexer");
+        if (muxMap != null) {
+            config.smartMultiplexerEnabled = getBool(muxMap, "enabled", config.smartMultiplexerEnabled);
+            config.smartMultiplexerPort = getPort(muxMap, "listen_port", config.smartMultiplexerPort);
+            config.publicHost = getStr(muxMap, "public_host", config.publicHost);
+            config.publicPort = isAutoValue(muxMap.get("public_port")) ? -1 : getPort(muxMap, "public_port", -1);
+            config.sshCheckTimeoutMs = getInt(muxMap, "ssh_check_timeout_ms", config.sshCheckTimeoutMs);
+            config.webCheckTimeoutMs = getInt(muxMap, "web_check_timeout_ms", config.webCheckTimeoutMs);
+
+            // Tương thích ngược nếu còn mảng cổng trong smart_multiplexer
+            addLegacyPorts(getIntList(muxMap, "shell_ports"), ServiceEndpoint.Category.SHELL, "tcp",
+                    "legacy-shell", config.shellServices);
+            addLegacyPorts(getIntList(muxMap, "web_ports"), ServiceEndpoint.Category.WEB, "tcp",
+                    "legacy-web", config.tcpWebServices);
+            addLegacyPorts(getIntList(muxMap, "minecraft_pe"), ServiceEndpoint.Category.OTHER, "tcp",
+                    "minecraft_pe", config.tcpOtherServices);
+            addLegacyPorts(getIntList(muxMap, "other_ports"), ServiceEndpoint.Category.OTHER, "tcp",
+                    "legacy-other", config.tcpOtherServices);
+        }
+
+        // ===== 2. Service (ssh, sftp, ftp...) =====
+        Map<String, Object> serviceMap = getMap(root, "service");
+        if (serviceMap != null) {
+            for (Map.Entry<String, Object> entry : serviceMap.entrySet()) {
+                Map<String, Object> item = asMap(entry.getValue());
+                if (item == null) continue;
+                boolean en = getBool(item, "enabled", true);
+                if (!en) continue;
+                String ip = getStr(item, "ip", "127.0.0.1");
+                int port = getPort(item, "listen_port", -1);
+                if (port <= 0) port = getPort(item, "port", -1);
+                if (port > 0) {
+                    config.shellServices.add(new ServiceEndpoint(
+                            entry.getKey(), ServiceEndpoint.Category.SHELL, true,
+                            ip, port, false, "tcp", false, "", "", "/"));
+                }
             }
         }
-        String topSection = json.substring(0, firstSection);
-        config.enabled = parseBoolean(topSection, "enabled", config.enabled);
-        config.bindAddress = parseString(topSection, "bind_address", config.bindAddress);
-        config.autoReload = parseBoolean(topSection, "auto_reload", config.autoReload);
 
-        // ===== 1. Parse Smart Multiplexer =====
-        String muxSection = extractSection(json, "\"smart_multiplexer\"");
-        if (muxSection != null) {
-            config.smartMultiplexerEnabled = parseBoolean(muxSection, "enabled", config.smartMultiplexerEnabled);
-            config.smartMultiplexerPort = parseInt(muxSection, "listen_port", config.smartMultiplexerPort);
-            config.sshCheckTimeoutMs = parseInt(muxSection, "ssh_check_timeout_ms", config.sshCheckTimeoutMs);
-            config.webCheckTimeoutMs = parseInt(muxSection, "web_check_timeout_ms", config.webCheckTimeoutMs);
-
-            config.webPorts = parseIntArray(muxSection, "web_ports");
-            config.shellPorts = parseIntArray(muxSection, "shell_ports");
-            config.otherPorts = parseIntArray(muxSection, "other_ports");
-
-            if (config.webPorts.isEmpty() && config.shellPorts.isEmpty()
-                    && config.otherPorts.isEmpty()) {
-                parseLegacyRules(muxSection, config);
-            }
+        // ===== 3. AI Assistant =====
+        Map<String, Object> aiMap = getMap(root, "ai_assistant");
+        if (aiMap != null) {
+            config.aiEnabled = getBool(aiMap, "enabled", config.aiEnabled);
+            config.aiOnlineEnabled = getBool(aiMap, "online_enabled", config.aiOnlineEnabled);
+            config.aiOnlineApiUrl = getStr(aiMap, "online_api_url", config.aiOnlineApiUrl);
+            config.aiOnlineApiKey = getStr(aiMap, "online_api_key", config.aiOnlineApiKey);
+            config.aiOnlineModel = getStr(aiMap, "online_model", config.aiOnlineModel);
         }
 
-        // ===== 2. Parse AI Assistant =====
-        String aiSection = extractSection(json, "\"ai_assistant\"");
-        if (aiSection != null) {
-            config.aiEnabled = parseBoolean(aiSection, "enabled", config.aiEnabled);
-            config.aiOnlineEnabled = parseBoolean(aiSection, "online_enabled", config.aiOnlineEnabled);
-            config.aiOnlineApiUrl = parseString(aiSection, "online_api_url", config.aiOnlineApiUrl);
-            config.aiOnlineApiKey = parseString(aiSection, "online_api_key", config.aiOnlineApiKey);
-            config.aiOnlineModel = parseString(aiSection, "online_model", config.aiOnlineModel);
+        // ===== 4. TCP Section (web_port + minecraft_pc/pe + dịch vụ khác) =====
+        Map<String, Object> tcpMap = getMap(root, "tcp");
+        if (tcpMap != null) {
+            parseTransportSection(tcpMap, "tcp", config.tcpWebServices,
+                    config.tcpOtherServices, config.udpWebServices, config.udpOtherServices);
         }
 
-        // ===== 3. Parse Port Forwarding Mappings =====
-        String pfSection = extractSection(json, "\"port_forwarding\"");
-        if (pfSection != null) {
-            String mappingRegex = "\"name\"\\s*:\\s*\"([^\"]+)\".*?" +
-                    "\"public_port\"\\s*:\\s*(\\d+).*?" +
-                    "\"internal_port\"\\s*:\\s*(\\d+).*?" +
-                    "\"protocol\"\\s*:\\s*\"([^\"]+)\".*?" +
-                    "\"enabled\"\\s*:\\s*(true|false)";
+        // ===== 5. UDP Section (web_port QUIC + minecraft_pe + dịch vụ UDP khác) =====
+        Map<String, Object> udpMap = getMap(root, "udp");
+        if (udpMap != null) {
+            parseTransportSection(udpMap, "udp", config.udpWebServices,
+                    config.udpOtherServices, config.tcpWebServices, config.tcpOtherServices);
+        }
 
-            Matcher mMatcher = Pattern.compile(mappingRegex, Pattern.DOTALL).matcher(pfSection);
-            while (mMatcher.find()) {
+        // Giải quyết tham chiếu group / web_main / listen_port: "auto" cho Web TCP & UDP
+        resolveWebGroups(config.tcpWebServices);
+        resolveWebGroups(config.udpWebServices);
+
+        // ===== 6. Legacy Port Forwarding =====
+        List<Object> pfList = getList(root, "port_forwarding");
+        if (pfList != null) {
+            for (Object o : pfList) {
+                Map<String, Object> m = asMap(o);
+                if (m == null) continue;
                 config.mappings.add(new PortMapping(
-                        mMatcher.group(1),
-                        Integer.parseInt(mMatcher.group(2)),
-                        Integer.parseInt(mMatcher.group(3)),
-                        mMatcher.group(4),
-                        Boolean.parseBoolean(mMatcher.group(5))));
+                        getStr(m, "name", "mapping"),
+                        getInt(m, "public_port", 0),
+                        getInt(m, "internal_port", 0),
+                        getStr(m, "protocol", "tcp"),
+                        getBool(m, "enabled", false)));
             }
         }
 
-        // ===== 4. Parse Minecraft Router =====
-        String mcSection = extractSection(json, "\"minecraft_router\"");
-        if (mcSection != null) {
-            config.minecraftRouterEnabled = parseBoolean(mcSection, "enabled", config.minecraftRouterEnabled);
-            config.minecraftRouterType = parseString(mcSection, "type", config.minecraftRouterType)
-                    .trim().toLowerCase(java.util.Locale.ROOT);
-            config.minecraftRouterPort = parseInt(mcSection, "listen_port", config.minecraftRouterPort);
-            config.minecraftDefaultPort = parseInt(mcSection, "default_port", config.minecraftDefaultPort);
+        // ===== 7. Legacy Minecraft Router =====
+        Map<String, Object> mcMap = getMap(root, "minecraft_router");
+        if (mcMap != null) {
+            config.minecraftRouterEnabled = getBool(mcMap, "enabled", false);
+            config.minecraftRouterType = getStr(mcMap, "type", "tcp").trim().toLowerCase(Locale.ROOT);
+            config.minecraftRouterPort = getPort(mcMap, "listen_port", 25000);
+            config.minecraftDefaultPort = getPort(mcMap, "default_port", 25565);
 
-            int routesIdx = mcSection.indexOf("\"routes\"");
-            if (routesIdx >= 0) {
-                int arrOpen = mcSection.indexOf('[', routesIdx);
-                int arrClose = mcSection.indexOf(']', arrOpen);
-                if (arrOpen >= 0 && arrClose > arrOpen) {
-                    String routesArr = mcSection.substring(arrOpen + 1, arrClose);
-                    Matcher objMatcher = Pattern.compile("\\{([^}]*)\\}", Pattern.DOTALL).matcher(routesArr);
-                    while (objMatcher.find()) {
-                        String obj = objMatcher.group(1);
-                        String host = parseString(obj, "hostname", "");
-                        int targetPort = parseInt(obj, "target_port", -1);
-                        String routeType = parseString(obj, "type", config.minecraftRouterType)
-                                .trim().toLowerCase(java.util.Locale.ROOT);
-                        if (targetPort <= 0) continue;
-
-                        boolean isUdpRoute = routeType.contains("udp") || "both".equals(routeType);
-                        boolean isTcpRoute = routeType.contains("tcp") || "both".equals(routeType) || routeType.isEmpty();
-
-                        if (isTcpRoute && !host.isEmpty()) {
-                            config.minecraftRoutes.put(host, targetPort);
-                        }
-                        if (isUdpRoute && !config.minecraftUdpTargets.contains(targetPort)) {
-                            config.minecraftUdpTargets.add(targetPort);
-                        }
+            List<Object> routes = getList(mcMap, "routes");
+            if (routes != null) {
+                for (Object o : routes) {
+                    Map<String, Object> r = asMap(o);
+                    if (r == null) continue;
+                    String host = getStr(r, "hostname", "");
+                    int targetPort = getInt(r, "target_port", -1);
+                    String rType = getStr(r, "type", config.minecraftRouterType).trim().toLowerCase(Locale.ROOT);
+                    if (targetPort <= 0) continue;
+                    boolean isUdp = rType.contains("udp") || "both".equals(rType);
+                    boolean isTcp = rType.contains("tcp") || "both".equals(rType) || rType.isEmpty();
+                    if (isTcp && !host.isEmpty()) config.minecraftRoutes.put(host, targetPort);
+                    if (isUdp && !config.minecraftUdpTargets.contains(targetPort)) {
+                        config.minecraftUdpTargets.add(targetPort);
                     }
                 }
             }
@@ -226,95 +250,120 @@ public class NetworkConfig {
     }
 
     /**
-     * Trích xuất đoạn JSON từ sectionKey cho tới section top-level kế tiếp (không phụ thuộc thứ tự key).
+     * Phân tích một khối "tcp" hoặc "udp" gồm web_port và các dịch vụ con tùy ý.
      */
-    private static String extractSection(String json, String sectionKey) {
-        int start = json.indexOf(sectionKey);
-        if (start < 0) return null;
+    private static void parseTransportSection(Map<String, Object> section, String defaultTransport,
+                                              List<ServiceEndpoint> primaryWeb, List<ServiceEndpoint> primaryOther,
+                                              List<ServiceEndpoint> crossWeb, List<ServiceEndpoint> crossOther) {
+        for (Map.Entry<String, Object> entry : section.entrySet()) {
+            String key = entry.getKey();
+            Map<String, Object> valMap = asMap(entry.getValue());
+            if (valMap == null) continue;
 
-        int end = json.length();
-        for (String otherKey : SECTION_KEYS) {
-            if (otherKey.equals(sectionKey)) continue;
-            int idx = json.indexOf(otherKey, start + sectionKey.length());
-            if (idx > start) {
-                end = Math.min(end, idx);
-            }
-        }
-        return json.substring(start, end);
-    }
+            if ("web_port".equalsIgnoreCase(key) || "web_ports".equalsIgnoreCase(key)) {
+                for (Map.Entry<String, Object> webEntry : valMap.entrySet()) {
+                    Map<String, Object> w = asMap(webEntry.getValue());
+                    if (w == null) continue;
+                    if (!getBool(w, "enabled", true)) continue;
 
-    private static boolean parseBoolean(String section, String key, boolean fallback) {
-        Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*(true|false)").matcher(section);
-        return m.find() ? Boolean.parseBoolean(m.group(1)) : fallback;
-    }
+                    String rawType = getStr(w, "type", defaultTransport).trim().toLowerCase(Locale.ROOT);
+                    boolean portAuto = isAutoValue(w.get("listen_port"));
+                    int port = portAuto ? -1 : getPort(w, "listen_port", -1);
+                    String ip = getStr(w, "ip", "127.0.0.1");
+                    boolean webMain = getBool(w, "web_main", false);
+                    String group = getStr(w, "group", "");
+                    String groupMember = formatGroupMember(w.get("group_member"));
+                    String path = getStr(w, "path", "/");
 
-    private static int parseInt(String section, String key, int fallback) {
-        Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*(\\d+)").matcher(section);
-        return m.find() ? Integer.parseInt(m.group(1)) : fallback;
-    }
+                    ServiceEndpoint ep = new ServiceEndpoint(
+                            webEntry.getKey(), ServiceEndpoint.Category.WEB, true,
+                            ip, port, portAuto, defaultTransport, webMain, group, groupMember, path);
+                    primaryWeb.add(ep);
 
-    private static String parseString(String section, String key, String fallback) {
-        Matcher m = Pattern.compile("\"" + key + "\"\\s*:\\s*\"([^\"]*)\"").matcher(section);
-        return m.find() ? m.group(1) : fallback;
-    }
-
-    private static List<Integer> parseIntArray(String section, String fieldName) {
-        List<Integer> result = new ArrayList<>();
-        int fieldIdx = section.indexOf("\"" + fieldName + "\"");
-        if (fieldIdx >= 0) {
-            int arrOpen = section.indexOf('[', fieldIdx);
-            int arrClose = section.indexOf(']', arrOpen);
-            if (arrOpen >= 0 && arrClose > arrOpen) {
-                String arrContent = section.substring(arrOpen + 1, arrClose);
-                Matcher numMatcher = Pattern.compile("\\d+").matcher(arrContent);
-                while (numMatcher.find()) {
-                    result.add(Integer.parseInt(numMatcher.group()));
+                    if ("both".equals(rawType) || "tcp/udp".equals(rawType) || "tcp+udp".equals(rawType)) {
+                        crossWeb.add(ep);
+                    }
                 }
-            }
-        }
-        return result;
-    }
-
-    private static void parseLegacyRules(String muxSection, NetworkConfig config) {
-        String ruleRegex = "\\{\\s*\"name\"\\s*:\\s*\"([^\"]+)\"[^}]*?" +
-                "\"protocol\"\\s*:\\s*\"([^\"]+)\"[^}]*?" +
-                "\"target_port\"\\s*:\\s*(\\d+)[^}]*?" +
-                "\"enabled\"\\s*:\\s*(true|false)[^}]*\\}";
-        Matcher ruleMatcher = Pattern.compile(ruleRegex, Pattern.DOTALL).matcher(muxSection);
-
-        while (ruleMatcher.find()) {
-            String proto = ruleMatcher.group(2).trim().toUpperCase();
-            int port = Integer.parseInt(ruleMatcher.group(3));
-            boolean isRuleEnabled = Boolean.parseBoolean(ruleMatcher.group(4));
-
-            if (!isRuleEnabled) continue;
-
-            if (proto.contains("HTTP") || proto.contains("WEB") || proto.contains("TLS")
-                    || proto.contains("HTTPS")) {
-                if (!config.webPorts.contains(port)) config.webPorts.add(port);
-            } else if (proto.contains("SSH") || proto.contains("SFTP") || proto.contains("FTP")) {
-                if (!config.shellPorts.contains(port)) config.shellPorts.add(port);
             } else {
-                if (!config.otherPorts.contains(port)) config.otherPorts.add(port);
+                // Bất kỳ dịch vụ nào khác trong tcp / udp (minecraft_pc, minecraft_pe, custom...)
+                if (!getBool(valMap, "enabled", true)) continue;
+                String rawType = getStr(valMap, "type", defaultTransport).trim().toLowerCase(Locale.ROOT);
+                boolean portAuto = isAutoValue(valMap.get("listen_port"));
+                int port = portAuto ? -1 : getPort(valMap, "listen_port", -1);
+                if (port <= 0) port = getPort(valMap, "port", -1);
+                String ip = getStr(valMap, "ip", "127.0.0.1");
+                if (port <= 0 && !portAuto) continue;
+
+                ServiceEndpoint ep = new ServiceEndpoint(
+                        key, ServiceEndpoint.Category.OTHER, true,
+                        ip, port, portAuto, defaultTransport, false, "", "", "/");
+                primaryOther.add(ep);
+
+                if ("both".equals(rawType) || "tcp/udp".equals(rawType) || "tcp+udp".equals(rawType)) {
+                    crossOther.add(ep);
+                }
             }
         }
+    }
 
-        int fbStart = muxSection.indexOf("\"fallback_chain\"");
-        if (fbStart >= 0) {
-            List<Integer> fallbacks = parseIntArray(muxSection, "fallback_chain");
-            for (int p : fallbacks) {
-                if (!config.webPorts.contains(p) && !config.shellPorts.contains(p)
-                        && !config.otherPorts.contains(p)) {
-                    config.otherPorts.add(p);
+    /**
+     * Giải quyết "listen_port": "auto" trong web_port dựa theo "group", "group_member", và "web_main".
+     */
+    private static void resolveWebGroups(List<ServiceEndpoint> webList) {
+        if (webList == null || webList.isEmpty()) return;
+
+        // Tìm web_main hoặc dịch vụ có cổng cụ thể cho mỗi group
+        Map<String, ServiceEndpoint> groupAnchor = new LinkedHashMap<>();
+        ServiceEndpoint globalMain = null;
+
+        for (ServiceEndpoint ep : webList) {
+            if (ep.getPort() > 0) {
+                if (ep.isWebMain() && globalMain == null) {
+                    globalMain = ep;
+                }
+                if (!ep.getGroup().isEmpty()) {
+                    ServiceEndpoint existing = groupAnchor.get(ep.getGroup());
+                    if (existing == null || (!existing.isWebMain() && ep.isWebMain())) {
+                        groupAnchor.put(ep.getGroup(), ep);
+                    }
                 }
             }
         }
 
-        if (!config.webPorts.isEmpty() || !config.shellPorts.isEmpty()
-                || !config.otherPorts.isEmpty()) {
-            OutputLogger.info("Tương thích ngược: Đã chuyển đổi priority_rules cũ → 3 nhóm cổng mới.");
+        for (ServiceEndpoint ep : webList) {
+            if (ep.getPort() > 0) continue; // Đã có cổng cụ thể
+
+            ServiceEndpoint anchor = !ep.getGroup().isEmpty() ? groupAnchor.get(ep.getGroup()) : null;
+            if (anchor == null) anchor = globalMain;
+
+            if (anchor != null && anchor.getPort() > 0) {
+                // Kiểm tra group_member của anchor (auto / rỗng = chấp nhận toàn bộ thành viên cùng group)
+                String gm = anchor.getGroupMember();
+                boolean allowed = gm.isEmpty() || "auto".equalsIgnoreCase(gm)
+                        || gm.toLowerCase(Locale.ROOT).contains(ep.getName().toLowerCase(Locale.ROOT));
+                if (allowed) {
+                    ep.setResolvedPort(anchor.getPort());
+                }
+            }
         }
     }
+
+    private static void addLegacyPorts(List<Integer> ports, ServiceEndpoint.Category cat,
+                                       String transport, String prefix, List<ServiceEndpoint> dest) {
+        for (int p : ports) {
+            if (p <= 0) continue;
+            boolean exists = dest.stream().anyMatch(e -> e.getPort() == p && "127.0.0.1".equals(e.getIp()));
+            if (!exists) {
+                dest.add(new ServiceEndpoint(prefix + "-" + p, cat, true, "127.0.0.1",
+                        p, false, transport, dest.isEmpty() && cat == ServiceEndpoint.Category.WEB,
+                        "", "auto", "/"));
+            }
+        }
+    }
+
+    // ==========================================
+    // TẠO CẤU HÌNH MẪU CHUẨN JSON
+    // ==========================================
 
     public static void createDefaultConfig() {
         String defaultJson = "{\n" +
@@ -326,11 +375,25 @@ public class NetworkConfig {
                 "    \"enabled\": true,\n" +
                 "    \"listen_port\": 25565,\n" +
                 "    \"ssh_check_timeout_ms\": 2000,\n" +
-                "    \"web_check_timeout_ms\": 2500,\n" +
+                "    \"web_check_timeout_ms\": 2500\n" +
+                "  },\n" +
                 "\n" +
-                "    \"web_ports\": [8080, 8081],\n" +
-                "    \"shell_ports\": [2222],\n" +
-                "    \"other_ports\": [25566, 25567, 19132]\n" +
+                "  \"service\": {\n" +
+                "    \"ssh\": {\n" +
+                "      \"enabled\": true,\n" +
+                "      \"ip\": \"127.0.0.1\",\n" +
+                "      \"listen_port\": 22\n" +
+                "    },\n" +
+                "    \"sftp\": {\n" +
+                "      \"enabled\": true,\n" +
+                "      \"ip\": \"127.0.0.1\",\n" +
+                "      \"listen_port\": 22\n" +
+                "    },\n" +
+                "    \"ftp\": {\n" +
+                "      \"enabled\": false,\n" +
+                "      \"ip\": \"127.0.0.1\",\n" +
+                "      \"listen_port\": 21\n" +
+                "    }\n" +
                 "  },\n" +
                 "\n" +
                 "  \"ai_assistant\": {\n" +
@@ -341,14 +404,49 @@ public class NetworkConfig {
                 "    \"online_model\": \"gpt-4o-mini\"\n" +
                 "  },\n" +
                 "\n" +
-                "  \"port_forwarding\": [],\n" +
+                "  \"tcp\": {\n" +
+                "    \"web_port\": {\n" +
+                "      \"web_home\": {\n" +
+                "        \"enabled\": true,\n" +
+                "        \"web_main\": true,\n" +
+                "        \"group\": \"Example_1\",\n" +
+                "        \"group_member\": \"auto\",\n" +
+                "        \"type\": \"tcp\",\n" +
+                "        \"ip\": \"127.0.0.1\",\n" +
+                "        \"listen_port\": 8080,\n" +
+                "        \"path\": \"/\"\n" +
+                "      },\n" +
+                "      \"web_about\": {\n" +
+                "        \"enabled\": true,\n" +
+                "        \"web_main\": false,\n" +
+                "        \"group\": \"Example_1\",\n" +
+                "        \"type\": \"tcp\",\n" +
+                "        \"listen_port\": \"auto\",\n" +
+                "        \"path\": \"/about\"\n" +
+                "      }\n" +
+                "    },\n" +
+                "    \"minecraft_pc\": {\n" +
+                "      \"enabled\": true,\n" +
+                "      \"type\": \"tcp\",\n" +
+                "      \"ip\": \"127.0.0.1\",\n" +
+                "      \"listen_port\": 25566\n" +
+                "    },\n" +
+                "    \"minecraft_pe\": {\n" +
+                "      \"enabled\": true,\n" +
+                "      \"type\": \"tcp\",\n" +
+                "      \"ip\": \"127.0.0.1\",\n" +
+                "      \"listen_port\": 19132\n" +
+                "    }\n" +
+                "  },\n" +
                 "\n" +
-                "  \"minecraft_router\": {\n" +
-                "    \"enabled\": true,\n" +
-                "    \"type\": \"udp\",\n" +
-                "    \"listen_port\": 25565,\n" +
-                "    \"default_port\": 19132,\n" +
-                "    \"routes\": []\n" +
+                "  \"udp\": {\n" +
+                "    \"web_port\": {},\n" +
+                "    \"minecraft_pe\": {\n" +
+                "      \"enabled\": true,\n" +
+                "      \"type\": \"udp\",\n" +
+                "      \"ip\": \"127.0.0.1\",\n" +
+                "      \"listen_port\": 19132\n" +
+                "    }\n" +
                 "  }\n" +
                 "}\n";
 
@@ -361,6 +459,80 @@ public class NetworkConfig {
     }
 
     // ==========================================
+    // TIỆN ÍCH TRÍCH XUẤT JSON AN TOÀN
+    // ==========================================
+
+    @SuppressWarnings("unchecked")
+    private static Map<String, Object> asMap(Object obj) {
+        return (obj instanceof Map) ? (Map<String, Object>) obj : null;
+    }
+
+    private static Map<String, Object> getMap(Map<String, Object> map, String key) {
+        return asMap(map.get(key));
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<Object> getList(Map<String, Object> map, String key) {
+        Object v = map.get(key);
+        return (v instanceof List) ? (List<Object>) v : null;
+    }
+
+    private static List<Integer> getIntList(Map<String, Object> map, String key) {
+        List<Integer> res = new ArrayList<>();
+        List<Object> list = getList(map, key);
+        if (list != null) {
+            for (Object item : list) {
+                if (item instanceof Number) {
+                    res.add(((Number) item).intValue());
+                } else if (item instanceof String) {
+                    try { res.add(Integer.parseInt(((String) item).trim())); } catch (NumberFormatException ignored) {}
+                }
+            }
+        }
+        return res;
+    }
+
+    private static boolean getBool(Map<String, Object> map, String key, boolean fallback) {
+        Object v = map.get(key);
+        if (v instanceof Boolean) return (Boolean) v;
+        if (v instanceof String) return Boolean.parseBoolean(((String) v).trim());
+        return fallback;
+    }
+
+    private static String getStr(Map<String, Object> map, String key, String fallback) {
+        Object v = map.get(key);
+        return v != null ? String.valueOf(v) : fallback;
+    }
+
+    private static int getInt(Map<String, Object> map, String key, int fallback) {
+        Object v = map.get(key);
+        if (v instanceof Number) return ((Number) v).intValue();
+        if (v instanceof String) {
+            try { return Integer.parseInt(((String) v).trim()); } catch (NumberFormatException ignored) {}
+        }
+        return fallback;
+    }
+
+    private static int getPort(Map<String, Object> map, String key, int fallback) {
+        return getInt(map, key, fallback);
+    }
+
+    private static boolean isAutoValue(Object v) {
+        return v instanceof String && "auto".equalsIgnoreCase(((String) v).trim());
+    }
+
+    @SuppressWarnings("unchecked")
+    private static String formatGroupMember(Object v) {
+        if (v == null) return "auto";
+        if (v instanceof List) {
+            List<String> parts = new ArrayList<>();
+            for (Object o : (List<Object>) v) parts.add(String.valueOf(o));
+            return String.join(",", parts);
+        }
+        return String.valueOf(v).trim();
+    }
+
+    // ==========================================
     // GETTERS
     // ==========================================
 
@@ -370,11 +542,16 @@ public class NetworkConfig {
 
     public boolean isSmartMultiplexerEnabled() { return smartMultiplexerEnabled; }
     public int getSmartMultiplexerPort() { return smartMultiplexerPort; }
+    public String getPublicHost() { return publicHost; }
+    public int getPublicPort() { return publicPort; }
     public int getSshCheckTimeoutMs() { return sshCheckTimeoutMs; }
     public int getWebCheckTimeoutMs() { return webCheckTimeoutMs; }
-    public List<Integer> getWebPorts() { return webPorts; }
-    public List<Integer> getShellPorts() { return shellPorts; }
-    public List<Integer> getOtherPorts() { return otherPorts; }
+
+    public List<ServiceEndpoint> getShellServices() { return shellServices; }
+    public List<ServiceEndpoint> getTcpWebServices() { return tcpWebServices; }
+    public List<ServiceEndpoint> getTcpOtherServices() { return tcpOtherServices; }
+    public List<ServiceEndpoint> getUdpWebServices() { return udpWebServices; }
+    public List<ServiceEndpoint> getUdpOtherServices() { return udpOtherServices; }
 
     public boolean isAiEnabled() { return aiEnabled; }
     public boolean isAiOnlineEnabled() { return aiOnlineEnabled; }
@@ -383,7 +560,6 @@ public class NetworkConfig {
     public String getAiOnlineModel() { return aiOnlineModel; }
 
     public List<PortMapping> getMappings() { return mappings; }
-
     public boolean isMinecraftRouterEnabled() { return minecraftRouterEnabled; }
     public String getMinecraftRouterType() { return minecraftRouterType; }
     public int getMinecraftRouterPort() { return minecraftRouterPort; }

@@ -32,14 +32,17 @@ mjt-core/
                 │
                 ├── network/                # TẦNG 6: MẠNG ẢO (Virtual Network Manager)
                 │   ├── VirtualNetworkManager.java # Bộ điều phối mạng ảo tổng
-                │   ├── NetworkConfig.java   # Đọc/ghi cấu hình mạng (network-config.json)
+                │   ├── NetworkConfig.java   # Đọc/ghi cấu hình mạng (service, tcp, udp, ai_assistant)
+                │   ├── SimpleJsonParser.java # Bộ phân tích JSON đệ quy thuần Java (Zero-Dependency)
+                │   ├── ServiceEndpoint.java # Mô hình điểm đích dịch vụ (ip, port/auto, path, group, type)
                 │   ├── PortMapping.java     # Lớp dữ liệu ánh xạ cổng ảo
                 │   ├── TcpForwarder.java    # Chuyển tiếp TCP (cổng → cổng)
                 │   ├── UdpForwarder.java    # Chuyển tiếp UDP (cổng → cổng)
                 │   ├── MinecraftRouter.java # Định tuyến MC Protocol (nhiều server/1 cổng)
                 │   │
                 │   └── multiplexer/         # BỘ DỒN KÊNH ĐA GIAO THỨC TRÊN 1 PORT
-                │       ├── SmartMultiplexer.java # Xác minh chủ động 3 tầng (SSH 2s → HTTP/S → Other)
+                │       ├── SmartMultiplexer.java # Xác minh chủ động 3 tầng + luồng UDP tích hợp
+                │       ├── NetherNetHelper.java  # Ánh xạ SDP ICE & cổng UDP động cho MCPE Bedrock
                 │       ├── MiniAiEngine.java     # AI mini offline/online phân loại & Q-Score cho Other
                 │       ├── ProtocolSniffer.java  # Nhận diện & xác minh HTTP, Minecraft, SSH, TLS
                 │       ├── MultiplexRule.java    # Quy tắc định tuyến theo giao thức/host/path
