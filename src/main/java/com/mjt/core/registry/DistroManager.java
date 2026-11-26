@@ -12,7 +12,8 @@ import java.util.regex.Pattern;
 public class DistroManager {
 
     /**
-     * Đọc tệp cấu hình JSON và trả về danh sách HĐH đã được đối chiếu với CPU hiện tại
+     * Đọc tệp cấu hình JSON và trả về danh sách HĐH đã được đối chiếu với CPU hiện
+     * tại
      */
     public static List<DistroManifest> getAvailableDistros() throws Exception {
         // 1. Đọc tệp distro-registry.json từ thư mục resources
@@ -20,22 +21,23 @@ public class DistroManager {
         if (is == null) {
             throw new RuntimeException("Lỗi: Không tìm thấy tệp distro-registry.json trong resources.");
         }
-        
+
         // Chuyển luồng byte thành chuỗi String nguyên bản
         String jsonContent = new String(is.readAllBytes(), StandardCharsets.UTF_8);
-        
-        // 2. Lấy kiến trúc CPU để chuẩn bị lọc link tải (Chỉ lấy link x86_64 HOẶC aarch64)
+
+        // 2. Lấy kiến trúc CPU để chuẩn bị lọc link tải (Chỉ lấy link x86_64 HOẶC
+        // aarch64)
         String currentCpuArch = HardwareProber.getSystemArchitecture();
         List<DistroManifest> distros = new ArrayList<>();
 
         // 3. Sử dụng Regex để quét và bóc tách từng khối dữ liệu HĐH trong JSON
         // Regex này bỏ qua dấu ngoặc nhọn, dấu phẩy và gom đúng các giá trị cần thiết.
         String regex = "\"id\"\\s*:\\s*\"([^\"]+)\".*?" +
-                       "\"display_name\"\\s*:\\s*\"([^\"]+)\".*?" +
-                       "\"shell_path\"\\s*:\\s*\"([^\"]+)\".*?" +
-                       "\"x86_64\"\\s*:\\s*\"([^\"]+)\".*?" +
-                       "\"aarch64\"\\s*:\\s*\"([^\"]+)\"";
-                       
+                "\"display_name\"\\s*:\\s*\"([^\"]+)\".*?" +
+                "\"shell_path\"\\s*:\\s*\"([^\"]+)\".*?" +
+                "\"x86_64\"\\s*:\\s*\"([^\"]+)\".*?" +
+                "\"aarch64\"\\s*:\\s*\"([^\"]+)\"";
+
         Pattern pattern = Pattern.compile(regex, Pattern.DOTALL);
         Matcher matcher = pattern.matcher(jsonContent);
 
@@ -73,6 +75,6 @@ public class DistroManager {
         } catch (Exception e) {
             // Nuốt lỗi nếu không đọc được file
         }
-        return "1.0.0";  // mjt-core version
+        return "1.1.0"; // mjt-core version
     }
 }

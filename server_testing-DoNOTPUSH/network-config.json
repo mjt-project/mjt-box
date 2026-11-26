@@ -1,0 +1,23 @@
+{
+  "enabled": true,
+  "bind_address": "0.0.0.0",
+  "auto_reload": true,
+
+  "smart_multiplexer": {
+    "enabled": true,
+    "listen_port": 25565,
+
+    "web_ports": [8080, 8081],
+    "shell_ports": [2222],
+    "other_ports": [25566, 25567]
+  },
+
+  "port_forwarding": [],
+
+  "minecraft_router": {
+    "enabled": false,
+    "listen_port": 25000,
+    "default_port": 25565,
+    "routes": []
+  }
+}

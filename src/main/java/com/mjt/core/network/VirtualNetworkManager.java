@@ -4,28 +4,32 @@ import com.mjt.core.network.multiplexer.SmartMultiplexer;
 import com.mjt.core.ui.ConsoleColors;
 import com.mjt.core.ui.OutputLogger;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
 /**
- * Bộ quản lý mạng ảo MJT (MJT Virtual Network Manager).
+ * Bộ quản lý mạng ảo MJT v2 (MJT Virtual Network Manager).
  *
  * Chức năng chính:
- *   1. Smart Multiplexer: Dồn kênh đa giao thức (Web, Minecraft, VS Code, SSH) trên 1 cổng duy nhất
- *      kèm cơ chế dò tìm và thử theo chuỗi ưu tiên (Priority Fallback Chain).
+ *   1. Smart Multiplexer v2: Dồn kênh đa giao thức trên 1 cổng duy nhất
+ *      với 3 nhóm cổng tách biệt (Web / Shell / Other) + Round-Robin.
  *   2. Port Forwarding: Chuyển tiếp cổng TCP/UDP riêng biệt khi có nhiều cổng công khai.
  *   3. Minecraft Router: Định tuyến virtual host cho nhiều server Minecraft.
+ *   4. Hot-Reload: Tự động theo dõi network-config.json và cập nhật realtime.
  */
 public class VirtualNetworkManager {
 
-    private final NetworkConfig config;
+    private NetworkConfig config;
     private SmartMultiplexer smartMultiplexer;
     private final List<TcpForwarder> tcpForwarders = new ArrayList<>();
     private final List<UdpForwarder> udpForwarders = new ArrayList<>();
     private MinecraftRouter minecraftRouter;
 
-    private boolean started = false;
+    private volatile boolean started = false;
+    private Thread hotReloadThread;
+    private volatile boolean hotReloadRunning = false;
 
     public VirtualNetworkManager(NetworkConfig config) {
         this.config = config;
@@ -42,21 +46,22 @@ public class VirtualNetworkManager {
 
         System.out.println();
         System.out.println(ConsoleColors.CYAN + "==================================================" + ConsoleColors.RESET);
-        System.out.println(ConsoleColors.CYAN + "       MJT Virtual Network Manager                " + ConsoleColors.RESET);
+        System.out.println(ConsoleColors.CYAN + "       MJT Virtual Network Manager v2             " + ConsoleColors.RESET);
         System.out.println(ConsoleColors.CYAN + "==================================================" + ConsoleColors.RESET);
 
         int successCount = 0;
         int failCount = 0;
 
-        // ===== 1. KHỞI ĐỘNG SMART MULTIPLEXER (1 CỔNG ĐA GIAO THỨC) =====
+        // ===== 1. KHỞI ĐỘNG SMART MULTIPLEXER v2 (3 NHÓM CỔNG TÁCH BIỆT) =====
         if (config.isSmartMultiplexerEnabled()) {
             try {
                 this.smartMultiplexer = new SmartMultiplexer(
                     "PrimaryMux",
                     config.getSmartMultiplexerPort(),
                     config.getBindAddress(),
-                    config.getMultiplexRules(),
-                    config.getFallbackChain()
+                    config.getWebPorts(),
+                    config.getShellPorts(),
+                    config.getOtherPorts()
                 );
                 smartMultiplexer.start();
                 successCount++;
@@ -67,7 +72,7 @@ public class VirtualNetworkManager {
             }
         }
 
-        // ===== 2. KHỞI ĐỘNG PORT FORWARDING RIÊNG BIỆT (NẾU CÓ) =====
+        // ===== 2. KHỞI ĐỘNG PORT FORWARDING (NẾU CÓ) =====
         for (PortMapping mapping : config.getMappings()) {
             if (!mapping.isEnabled()) {
                 OutputLogger.info("Bỏ qua mapping đã vô hiệu hóa: " + mapping.getName());
@@ -142,6 +147,84 @@ public class VirtualNetworkManager {
         System.out.println();
 
         this.started = true;
+
+        // ===== 4. KHỞI ĐỘNG HOT-RELOAD (NẾU BẬT) =====
+        if (config.isAutoReload()) {
+            startHotReload();
+        }
+    }
+
+    // ==========================================
+    // HOT-RELOAD: Tự động cập nhật config khi file thay đổi
+    // ==========================================
+
+    /**
+     * Khởi động luồng theo dõi file network-config.json.
+     * Mỗi 3 giây kiểm tra lastModified, nếu thay đổi → đọc lại và cập nhật.
+     */
+    private void startHotReload() {
+        final File configFile = new File(NetworkConfig.getConfigFilePath());
+        if (!configFile.exists()) return;
+
+        this.hotReloadRunning = true;
+
+        this.hotReloadThread = new Thread(() -> {
+            long lastModified = configFile.lastModified();
+            long lastSize = configFile.length();
+
+            OutputLogger.info("Hot-Reload: Đang theo dõi " + configFile.getName()
+                + " (cập nhật tự động mỗi 3 giây)");
+
+            while (hotReloadRunning) {
+                try {
+                    Thread.sleep(3000);
+                } catch (InterruptedException e) {
+                    break;
+                }
+
+                long currentModified = configFile.lastModified();
+                long currentSize = configFile.length();
+
+                if (currentModified != lastModified || currentSize != lastSize) {
+                    lastModified = currentModified;
+                    lastSize = currentSize;
+
+                    // Delay thêm 500ms để đảm bảo file đã ghi xong
+                    try {
+                        Thread.sleep(500);
+                    } catch (InterruptedException e) {
+                        break;
+                    }
+
+                    reloadConfig();
+                }
+            }
+        }, "MJT-HotReload");
+
+        hotReloadThread.setDaemon(true);
+        hotReloadThread.start();
+    }
+
+    /**
+     * Đọc lại config và cập nhật Smart Multiplexer mà KHÔNG cần restart.
+     */
+    private void reloadConfig() {
+        try {
+            NetworkConfig newConfig = NetworkConfig.load();
+
+            // Cập nhật 3 nhóm cổng cho Smart Multiplexer (nếu đang chạy)
+            if (smartMultiplexer != null && smartMultiplexer.isRunning()) {
+                smartMultiplexer.updatePortConfig(
+                    newConfig.getWebPorts(),
+                    newConfig.getShellPorts(),
+                    newConfig.getOtherPorts()
+                );
+            }
+
+            this.config = newConfig;
+        } catch (Exception e) {
+            OutputLogger.error("Hot-Reload: Lỗi đọc config mới: " + e.getMessage());
+        }
     }
 
     /**
@@ -151,6 +234,12 @@ public class VirtualNetworkManager {
         if (!started) return;
 
         OutputLogger.info("Đang dừng hệ thống mạng ảo MJT...");
+
+        // Dừng hot-reload
+        hotReloadRunning = false;
+        if (hotReloadThread != null) {
+            hotReloadThread.interrupt();
+        }
 
         if (smartMultiplexer != null) {
             smartMultiplexer.stop();

@@ -1,7 +1,5 @@
 package com.mjt.core.network;
 
-import com.mjt.core.network.multiplexer.MultiplexRule;
-import com.mjt.core.network.multiplexer.ProtocolType;
 import com.mjt.core.ui.OutputLogger;
 
 import java.io.File;
@@ -17,8 +15,25 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Quản lý cấu hình mạng ảo (Virtual Network Configuration).
- * Đọc/ghi tệp network-config.json bằng Regex (Zero-Dependency).
+ * Quản lý cấu hình mạng ảo MJT v2.
+ *
+ * Cấu trúc config mới (network-config.json):
+ *   {
+ *     "enabled": true,
+ *     "bind_address": "0.0.0.0",
+ *     "auto_reload": true,
+ *     "smart_multiplexer": {
+ *       "enabled": true,
+ *       "listen_port": 25565,
+ *       "web_ports": [8080, 8081, 8443],
+ *       "shell_ports": [2222],
+ *       "other_ports": [25566, 25567]
+ *     },
+ *     "port_forwarding": [],
+ *     "minecraft_router": { ... }
+ *   }
+ *
+ * Hot-Reload: Tự động theo dõi và cập nhật config khi file thay đổi.
  */
 public class NetworkConfig {
 
@@ -27,36 +42,37 @@ public class NetworkConfig {
     // ===== Cấu hình chung =====
     private boolean enabled;
     private String bindAddress;
+    private boolean autoReload;
 
-    // ===== CHẾ ĐỘ 1: SMART MULTIPLEXER (Dùng chung 1 Port duy nhất) =====
+    // ===== SMART MULTIPLEXER v2: 3 nhóm cổng tách biệt =====
     private boolean smartMultiplexerEnabled;
     private int smartMultiplexerPort;
-    private List<MultiplexRule> multiplexRules;
-    private List<Integer> fallbackChain;
+    private List<Integer> webPorts;    // HTTP, HTTPS, WebSocket
+    private List<Integer> shellPorts;  // SSH, SFTP, FTP
+    private List<Integer> otherPorts;  // Minecraft, game, dịch vụ khác
 
-    // ===== CHẾ ĐỘ 2: PORT FORWARDING (Chuyển tiếp nhiều cổng riêng biệt) =====
+    // ===== PORT FORWARDING (giữ tương thích cũ) =====
     private List<PortMapping> mappings;
 
-    // ===== CHẾ ĐỘ 3: MINECRAFT ROUTER RIÊNG BIỆT =====
+    // ===== MINECRAFT ROUTER (giữ tương thích cũ) =====
     private boolean minecraftRouterEnabled;
     private int minecraftRouterPort;
-    private Map<String, Integer> minecraftRoutes; // hostname → target_port
+    private Map<String, Integer> minecraftRoutes;
     private int minecraftDefaultPort;
 
     public NetworkConfig() {
         this.enabled = false;
         this.bindAddress = "0.0.0.0";
+        this.autoReload = true;
 
-        // Mặc định Smart Multiplexer
         this.smartMultiplexerEnabled = true;
-        this.smartMultiplexerPort = 20002;
-        this.multiplexRules = new ArrayList<>();
-        this.fallbackChain = new ArrayList<>();
+        this.smartMultiplexerPort = 25565;
+        this.webPorts = new ArrayList<>();
+        this.shellPorts = new ArrayList<>();
+        this.otherPorts = new ArrayList<>();
 
-        // Mặc định Port Forwarding
         this.mappings = new ArrayList<>();
 
-        // Mặc định Minecraft Router
         this.minecraftRouterEnabled = false;
         this.minecraftRouterPort = 25000;
         this.minecraftRoutes = new LinkedHashMap<>();
@@ -76,7 +92,7 @@ public class NetworkConfig {
         }
 
         try {
-            String json = Files.readString(configFile.toPath(), StandardCharsets.UTF_8);
+            String json = new String(Files.readAllBytes(configFile.toPath()), StandardCharsets.UTF_8);
             return parse(json);
         } catch (Exception e) {
             OutputLogger.error("Lỗi đọc cấu hình mạng: " + e.getMessage());
@@ -84,12 +100,19 @@ public class NetworkConfig {
         }
     }
 
+    /**
+     * Lấy đường dẫn file config (để hot-reload kiểm tra lastModified)
+     */
+    public static String getConfigFilePath() {
+        return CONFIG_FILE;
+    }
+
     // ==========================================
     // PHÂN TÍCH JSON BẰNG REGEX (Zero-Dependency)
     // ==========================================
 
     private static NetworkConfig parse(String rawJson) {
-        // Loại bỏ comment // hoặc /* */ nếu người dùng có gõ vào
+        // Loại bỏ comment
         String json = rawJson.replaceAll("(?m)^\\s*//.*$", "")
                 .replaceAll("/\\*.*?\\*/", "");
 
@@ -99,16 +122,14 @@ public class NetworkConfig {
         int pfIndex = json.indexOf("\"port_forwarding\"");
         int mcIndex = json.indexOf("\"minecraft_router\"");
 
-        // Tìm enabled và bind_address ở đầu file (top-level)
+        // Tìm enabled, bind_address, auto_reload ở đầu file (top-level)
         int firstSection = json.length();
-        if (muxIndex > 0)
-            firstSection = Math.min(firstSection, muxIndex);
-        if (pfIndex > 0)
-            firstSection = Math.min(firstSection, pfIndex);
-        if (mcIndex > 0)
-            firstSection = Math.min(firstSection, mcIndex);
+        if (muxIndex > 0) firstSection = Math.min(firstSection, muxIndex);
+        if (pfIndex > 0) firstSection = Math.min(firstSection, pfIndex);
+        if (mcIndex > 0) firstSection = Math.min(firstSection, mcIndex);
 
         String topSection = json.substring(0, firstSection);
+
         Matcher enabledMatcher = Pattern.compile("\"enabled\"\\s*:\\s*(true|false)").matcher(topSection);
         if (enabledMatcher.find()) {
             config.enabled = Boolean.parseBoolean(enabledMatcher.group(1));
@@ -119,13 +140,16 @@ public class NetworkConfig {
             config.bindAddress = bindMatcher.group(1);
         }
 
-        // ===== 1. Parse Smart Multiplexer =====
+        Matcher reloadMatcher = Pattern.compile("\"auto_reload\"\\s*:\\s*(true|false)").matcher(topSection);
+        if (reloadMatcher.find()) {
+            config.autoReload = Boolean.parseBoolean(reloadMatcher.group(1));
+        }
+
+        // ===== 1. Parse Smart Multiplexer v2 =====
         if (muxIndex >= 0) {
             int muxEnd = json.length();
-            if (pfIndex > muxIndex)
-                muxEnd = Math.min(muxEnd, pfIndex);
-            if (mcIndex > muxIndex)
-                muxEnd = Math.min(muxEnd, mcIndex);
+            if (pfIndex > muxIndex) muxEnd = Math.min(muxEnd, pfIndex);
+            if (mcIndex > muxIndex) muxEnd = Math.min(muxEnd, mcIndex);
             String muxSection = json.substring(muxIndex, muxEnd);
 
             Matcher muxEn = Pattern.compile("\"enabled\"\\s*:\\s*(true|false)").matcher(muxSection);
@@ -138,76 +162,27 @@ public class NetworkConfig {
                 config.smartMultiplexerPort = Integer.parseInt(muxPort.group(1));
             }
 
-            // Parse fallback_chain
-            int fbStart = muxSection.indexOf("\"fallback_chain\"");
-            if (fbStart >= 0) {
-                int arrOpen = muxSection.indexOf('[', fbStart);
-                int arrClose = muxSection.indexOf(']', arrOpen);
-                if (arrOpen >= 0 && arrClose > arrOpen) {
-                    String fbArr = muxSection.substring(arrOpen + 1, arrClose);
-                    Matcher numMatcher = Pattern.compile("\\d+").matcher(fbArr);
-                    while (numMatcher.find()) {
-                        config.fallbackChain.add(Integer.parseInt(numMatcher.group()));
-                    }
-                }
-            }
+            // Parse web_ports array
+            config.webPorts = parseIntArray(muxSection, "web_ports");
 
-            // Parse priority_rules
-            String ruleBlockRegex = "\\{\\s*\"name\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"protocol\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"target_port\"\\s*:\\s*(\\d+)[^}]*?\"enabled\"\\s*:\\s*(true|false)([^}]*)\\}";
-            Matcher ruleMatcher = Pattern.compile(ruleBlockRegex, Pattern.DOTALL).matcher(muxSection);
+            // Parse shell_ports array
+            config.shellPorts = parseIntArray(muxSection, "shell_ports");
 
-            while (ruleMatcher.find()) {
-                String rName = ruleMatcher.group(1);
-                String rProtoStr = ruleMatcher.group(2).trim().toUpperCase();
-                int rPort = Integer.parseInt(ruleMatcher.group(3));
-                boolean rEnabled = Boolean.parseBoolean(ruleMatcher.group(4));
-                String rExtra = ruleMatcher.group(5);
+            // Parse other_ports array
+            config.otherPorts = parseIntArray(muxSection, "other_ports");
 
-                ProtocolType pType = ProtocolType.UNKNOWN;
-                try {
-                    pType = ProtocolType.valueOf(rProtoStr);
-                } catch (IllegalArgumentException e) {
-                    if (rProtoStr.contains("MINECRAFT") || rProtoStr.contains("MC"))
-                        pType = ProtocolType.MINECRAFT;
-                    else if (rProtoStr.contains("HTTP") || rProtoStr.contains("WEB"))
-                        pType = ProtocolType.HTTP;
-                    else if (rProtoStr.contains("SSH"))
-                        pType = ProtocolType.SSH;
-                    else if (rProtoStr.contains("TLS") || rProtoStr.contains("HTTPS"))
-                        pType = ProtocolType.HTTPS_TLS;
-                }
-
-                MultiplexRule rule = new MultiplexRule(rName, pType, rPort, rEnabled);
-
-                // Parse host_routes (nếu có)
-                if (rExtra != null && rExtra.contains("\"host_routes\"")) {
-                    Matcher hrMatcher = Pattern
-                            .compile("\"host\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"target_port\"\\s*:\\s*(\\d+)")
-                            .matcher(rExtra);
-                    while (hrMatcher.find()) {
-                        rule.addHostRoute(hrMatcher.group(1), Integer.parseInt(hrMatcher.group(2)));
-                    }
-                }
-
-                // Parse path_routes (nếu có)
-                if (rExtra != null && rExtra.contains("\"path_routes\"")) {
-                    Matcher prMatcher = Pattern
-                            .compile("\"path\"\\s*:\\s*\"([^\"]+)\"[^}]*?\"target_port\"\\s*:\\s*(\\d+)")
-                            .matcher(rExtra);
-                    while (prMatcher.find()) {
-                        rule.addPathRoute(prMatcher.group(1), Integer.parseInt(prMatcher.group(2)));
-                    }
-                }
-
-                config.multiplexRules.add(rule);
+            // Tương thích ngược: nếu không có web_ports/shell_ports/other_ports,
+            // thử đọc priority_rules kiểu cũ và chuyển đổi sang format mới
+            if (config.webPorts.isEmpty() && config.shellPorts.isEmpty()
+                    && config.otherPorts.isEmpty()) {
+                parseLegacyRules(muxSection, config);
             }
         }
 
         // ===== 2. Parse Port Forwarding Mappings =====
         if (pfIndex >= 0) {
             int pfEnd = json.length();
-            if (mcIndex > pfIndex)
-                pfEnd = Math.min(pfEnd, mcIndex);
+            if (mcIndex > pfIndex) pfEnd = Math.min(pfEnd, mcIndex);
             String pfSection = json.substring(pfIndex, pfEnd);
 
             String mappingRegex = "\"name\"\\s*:\\s*\"([^\"]+)\".*?" +
@@ -257,72 +232,103 @@ public class NetworkConfig {
     }
 
     /**
-     * Tạo tệp cấu hình mẫu chuẩn JSON (RFC 8259)
+     * Parse một mảng JSON chứa số nguyên theo tên field.
+     * Ví dụ: "web_ports": [8080, 8081]  → List<Integer>{8080, 8081}
+     */
+    private static List<Integer> parseIntArray(String section, String fieldName) {
+        List<Integer> result = new ArrayList<>();
+        int fieldIdx = section.indexOf("\"" + fieldName + "\"");
+        if (fieldIdx >= 0) {
+            int arrOpen = section.indexOf('[', fieldIdx);
+            int arrClose = section.indexOf(']', arrOpen);
+            if (arrOpen >= 0 && arrClose > arrOpen) {
+                String arrContent = section.substring(arrOpen + 1, arrClose);
+                Matcher numMatcher = Pattern.compile("\\d+").matcher(arrContent);
+                while (numMatcher.find()) {
+                    result.add(Integer.parseInt(numMatcher.group()));
+                }
+            }
+        }
+        return result;
+    }
+
+    /**
+     * Tương thích ngược: Chuyển đổi priority_rules kiểu cũ sang 3 nhóm cổng mới
+     */
+    private static void parseLegacyRules(String muxSection, NetworkConfig config) {
+        String ruleRegex = "\\{\\s*\"name\"\\s*:\\s*\"([^\"]+)\"[^}]*?" +
+                "\"protocol\"\\s*:\\s*\"([^\"]+)\"[^}]*?" +
+                "\"target_port\"\\s*:\\s*(\\d+)[^}]*?" +
+                "\"enabled\"\\s*:\\s*(true|false)[^}]*\\}";
+        Matcher ruleMatcher = Pattern.compile(ruleRegex, Pattern.DOTALL).matcher(muxSection);
+
+        while (ruleMatcher.find()) {
+            String proto = ruleMatcher.group(2).trim().toUpperCase();
+            int port = Integer.parseInt(ruleMatcher.group(3));
+            boolean enabled = Boolean.parseBoolean(ruleMatcher.group(4));
+
+            if (!enabled) continue;
+
+            if (proto.contains("HTTP") || proto.contains("WEB") || proto.contains("TLS")
+                    || proto.contains("HTTPS")) {
+                if (!config.webPorts.contains(port)) {
+                    config.webPorts.add(port);
+                }
+            } else if (proto.contains("SSH") || proto.contains("SFTP") || proto.contains("FTP")) {
+                if (!config.shellPorts.contains(port)) {
+                    config.shellPorts.add(port);
+                }
+            } else {
+                // MINECRAFT, UNKNOWN, hoặc bất kỳ
+                if (!config.otherPorts.contains(port)) {
+                    config.otherPorts.add(port);
+                }
+            }
+        }
+
+        // Fallback chain cũ → thêm vào other_ports
+        int fbStart = muxSection.indexOf("\"fallback_chain\"");
+        if (fbStart >= 0) {
+            List<Integer> fallbacks = parseIntArray(muxSection, "fallback_chain");
+            for (int p : fallbacks) {
+                if (!config.webPorts.contains(p) && !config.shellPorts.contains(p)
+                        && !config.otherPorts.contains(p)) {
+                    config.otherPorts.add(p);
+                }
+            }
+        }
+
+        if (!config.webPorts.isEmpty() || !config.shellPorts.isEmpty()
+                || !config.otherPorts.isEmpty()) {
+            OutputLogger.info("Tương thích ngược: Đã chuyển đổi priority_rules cũ → 3 nhóm cổng mới.");
+        }
+    }
+
+    /**
+     * Tạo tệp cấu hình mẫu chuẩn (format v2)
      */
     public static void createDefaultConfig() {
         String defaultJson = "{\n" +
                 "  \"enabled\": true,\n" +
                 "  \"bind_address\": \"0.0.0.0\",\n" +
+                "  \"auto_reload\": true,\n" +
+                "\n" +
                 "  \"smart_multiplexer\": {\n" +
                 "    \"enabled\": true,\n" +
-                "    \"listen_port\": 20002,\n" +
-                "    \"priority_rules\": [\n" +
-                "      {\n" +
-                "        \"name\": \"minecraft-server\",\n" +
-                "        \"protocol\": \"MINECRAFT\",\n" +
-                "        \"target_port\": 25565,\n" +
-                "        \"enabled\": true,\n" +
-                "        \"host_routes\": [\n" +
-                "          { \"host\": \"mc1\", \"target_port\": 25565 },\n" +
-                "          { \"host\": \"mc2\", \"target_port\": 25566 }\n" +
-                "        ]\n" +
-                "      },\n" +
-                "      {\n" +
-                "        \"name\": \"web-and-vscode\",\n" +
-                "        \"protocol\": \"HTTP\",\n" +
-                "        \"target_port\": 8080,\n" +
-                "        \"enabled\": true,\n" +
-                "        \"host_routes\": [\n" +
-                "          { \"host\": \"web\", \"target_port\": 8080 },\n" +
-                "          { \"host\": \"code\", \"target_port\": 8443 }\n" +
-                "        ],\n" +
-                "        \"path_routes\": [\n" +
-                "          { \"path\": \"/vscode\", \"target_port\": 8443 }\n" +
-                "        ]\n" +
-                "      },\n" +
-                "      {\n" +
-                "        \"name\": \"ssh-service\",\n" +
-                "        \"protocol\": \"SSH\",\n" +
-                "        \"target_port\": 2222,\n" +
-                "        \"enabled\": false\n" +
-                "      }\n" +
-                "    ],\n" +
-                "    \"fallback_chain\": [25565, 8080, 8443, 2222]\n" +
+                "    \"listen_port\": 25565,\n" +
+                "\n" +
+                "    \"web_ports\": [8080, 8081],\n" +
+                "    \"shell_ports\": [2222],\n" +
+                "    \"other_ports\": [25566, 25567]\n" +
                 "  },\n" +
-                "  \"port_forwarding\": [\n" +
-                "    {\n" +
-                "      \"name\": \"minecraft-direct\",\n" +
-                "      \"public_port\": 20002,\n" +
-                "      \"internal_port\": 25565,\n" +
-                "      \"protocol\": \"tcp\",\n" +
-                "      \"enabled\": false\n" +
-                "    },\n" +
-                "    {\n" +
-                "      \"name\": \"web-direct\",\n" +
-                "      \"public_port\": 20003,\n" +
-                "      \"internal_port\": 8080,\n" +
-                "      \"protocol\": \"tcp\",\n" +
-                "      \"enabled\": false\n" +
-                "    }\n" +
-                "  ],\n" +
+                "\n" +
+                "  \"port_forwarding\": [],\n" +
+                "\n" +
                 "  \"minecraft_router\": {\n" +
                 "    \"enabled\": false,\n" +
                 "    \"listen_port\": 25000,\n" +
                 "    \"default_port\": 25565,\n" +
-                "    \"routes\": [\n" +
-                "      { \"hostname\": \"mc1\", \"target_port\": 25565 },\n" +
-                "      { \"hostname\": \"mc2\", \"target_port\": 25566 }\n" +
-                "    ]\n" +
+                "    \"routes\": []\n" +
                 "  }\n" +
                 "}\n";
 
@@ -338,47 +344,20 @@ public class NetworkConfig {
     // GETTERS
     // ==========================================
 
-    public boolean isEnabled() {
-        return enabled;
-    }
+    public boolean isEnabled() { return enabled; }
+    public String getBindAddress() { return bindAddress; }
+    public boolean isAutoReload() { return autoReload; }
 
-    public String getBindAddress() {
-        return bindAddress;
-    }
+    public boolean isSmartMultiplexerEnabled() { return smartMultiplexerEnabled; }
+    public int getSmartMultiplexerPort() { return smartMultiplexerPort; }
+    public List<Integer> getWebPorts() { return webPorts; }
+    public List<Integer> getShellPorts() { return shellPorts; }
+    public List<Integer> getOtherPorts() { return otherPorts; }
 
-    public boolean isSmartMultiplexerEnabled() {
-        return smartMultiplexerEnabled;
-    }
+    public List<PortMapping> getMappings() { return mappings; }
 
-    public int getSmartMultiplexerPort() {
-        return smartMultiplexerPort;
-    }
-
-    public List<MultiplexRule> getMultiplexRules() {
-        return multiplexRules;
-    }
-
-    public List<Integer> getFallbackChain() {
-        return fallbackChain;
-    }
-
-    public List<PortMapping> getMappings() {
-        return mappings;
-    }
-
-    public boolean isMinecraftRouterEnabled() {
-        return minecraftRouterEnabled;
-    }
-
-    public int getMinecraftRouterPort() {
-        return minecraftRouterPort;
-    }
-
-    public Map<String, Integer> getMinecraftRoutes() {
-        return minecraftRoutes;
-    }
-
-    public int getMinecraftDefaultPort() {
-        return minecraftDefaultPort;
-    }
+    public boolean isMinecraftRouterEnabled() { return minecraftRouterEnabled; }
+    public int getMinecraftRouterPort() { return minecraftRouterPort; }
+    public Map<String, Integer> getMinecraftRoutes() { return minecraftRoutes; }
+    public int getMinecraftDefaultPort() { return minecraftDefaultPort; }
 }
