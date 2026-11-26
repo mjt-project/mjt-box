@@ -38,9 +38,10 @@ mjt-core/
                 │   ├── UdpForwarder.java    # Chuyển tiếp UDP (cổng → cổng)
                 │   ├── MinecraftRouter.java # Định tuyến MC Protocol (nhiều server/1 cổng)
                 │   │
-                │   └── multiplexer/         # [MỚI] BỘ DỒN KÊNH ĐA GIAO THỨC TRÊN 1 PORT
-                │       ├── SmartMultiplexer.java # Lắng nghe 1 cổng, dò tìm và thử theo chuỗi ưu tiên
-                │       ├── ProtocolSniffer.java  # Nhận diện HTTP, Minecraft, SSH, TLS
+                │   └── multiplexer/         # BỘ DỒN KÊNH ĐA GIAO THỨC TRÊN 1 PORT
+                │       ├── SmartMultiplexer.java # Xác minh chủ động 3 tầng (SSH 2s → HTTP/S → Other)
+                │       ├── MiniAiEngine.java     # AI mini offline/online phân loại & Q-Score cho Other
+                │       ├── ProtocolSniffer.java  # Nhận diện & xác minh HTTP, Minecraft, SSH, TLS
                 │       ├── MultiplexRule.java    # Quy tắc định tuyến theo giao thức/host/path
                 │       └── ProtocolType.java     # Định danh loại giao thức
                 │
