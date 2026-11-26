@@ -24,7 +24,7 @@ public class ProotOrchestrator {
         String hostWorkspace = System.getProperty("user.dir");
 
         // ==========================================
-        // [AUTO-PATCH] only for ubuntu
+        // [AUTO-PATCH] only for ubuntu / debian
         // ==========================================
         if (rootfsDir.contains("ubuntu") || rootfsDir.contains("debian")) {
             // 1. Trị dứt điểm lỗi "ucf: do not have write privilege"
@@ -46,6 +46,28 @@ public class ProotOrchestrator {
                 }
             }
         }
+
+        // ==========================================
+        // [AUTO-PATCH] for alpine (musl libc Java libjli.so fix)
+        // ==========================================
+        if (rootfsDir.contains("alpine")) {
+            try {
+                // Tự động cấu hình dynamic linker musl để tìm thấy libjli.so của OpenJDK
+                File etcDir = new File(rootfsDir, "etc");
+                if (etcDir.exists()) {
+                    String[] arches = {"x86_64", "aarch64", "armhf", "armv7"};
+                    String ldPaths = "/lib\n/usr/local/lib\n/usr/lib\n/usr/lib/jvm/default-jvm/lib/jli\n/usr/lib/jvm/default-jvm/lib\n";
+                    for (String arch : arches) {
+                        File ldPathFile = new File(etcDir, "ld-musl-" + arch + ".path");
+                        if (!ldPathFile.exists()) {
+                            java.nio.file.Files.writeString(ldPathFile.toPath(), ldPaths);
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                OutputLogger.warning("Không thể áp dụng bản vá tự động cho Alpine musl dynamic loader.");
+            }
+        }
         // 1. Khởi tạo danh sách lệnh với các cờ (Options) của PRoot TRƯỚC
         List<String> command = new ArrayList<>(Arrays.asList(
                 "./proot",
@@ -55,14 +77,25 @@ public class ProotOrchestrator {
                 "-b", hostWorkspace + ":/workspace"
         ));
 
-        // 2. Chèn tiếp các cấu hình mạng (Nếu có)
+        // 2. Chèn các hệ thống tệp cốt lõi từ Host (CỰC KỲ QUAN TRỌNG CHO DOCKER / PROOT)
+        // JVM và musl libc bắt buộc cần /proc (để đọc /proc/self/exe tìm libjli.so) và /dev
+        String[] essentialBinds = {"/proc", "/dev", "/sys", "/dev/pts", "/dev/shm"};
+        for (String b : essentialBinds) {
+            File f = new File(b);
+            if (f.exists()) {
+                command.add("-b");
+                command.add(b + ":" + b);
+            }
+        }
+
+        // 3. Chèn tiếp các cấu hình mạng (Nếu có)
         File resolvConf = new File("/etc/resolv.conf");
         if (resolvConf.exists()) {
             command.add("-b");
             command.add("/etc/resolv.conf:/etc/resolv.conf");
         }
 
-        // 3. [CHỐT HẠ]: Nạp đường dẫn Shell
+        // 4. [CHỐT HẠ]: Nạp đường dẫn Shell
         command.add(shellPath);
 
         // ==========================================
@@ -84,6 +117,10 @@ public class ProotOrchestrator {
         pb.environment().put("LANG", "C.UTF-8");
         pb.environment().put("TERM", "xterm-256color");
         pb.environment().put("PROOT_NO_SECCOMP", "1");
+        
+        if (rootfsDir.contains("alpine")) {
+            pb.environment().put("LD_LIBRARY_PATH", "/lib:/usr/local/lib:/usr/lib:/usr/lib/jvm/default-jvm/lib/jli:/usr/lib/jvm/default-jvm/lib");
+        }
         
         boolean disableInteractive = ConfigManager.getBoolean("debian-frontend-noninteractive", true);
         if (disableInteractive && (rootfsDir.contains("ubuntu") || rootfsDir.contains("debian"))) {

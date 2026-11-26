@@ -7,6 +7,7 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.BindException;
 import java.net.InetAddress;
 import java.net.InetSocketAddress;
 import java.net.ServerSocket;
@@ -22,17 +23,23 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 
 /**
- * Bộ dồn kênh và định tuyến thông minh trên MỘT CỔNG DUY NHẤT (Smart Port Multiplexer).
+ * Bộ dồn kênh và định tuyến thông minh trên MỘT CỔNG DUY NHẤT (Smart Port
+ * Multiplexer).
  *
  * Tính năng chính:
- *   1. Lắng nghe trên 1 cổng công khai (ví dụ 20002).
- *   2. Tự động nhận diện giao thức (Minecraft, HTTP, WebSocket, SSH...) từ gói tin đầu tiên.
- *   3. Phân cấp mức độ ưu tiên (Priority Probing Chain):
- *      - Thử kết nối dịch vụ ưu tiên cao nhất tương ứng với giao thức phát hiện được.
- *      - Nếu dịch vụ đó chưa khởi động hoặc từ chối (Connection Refused),
- *        tự động rơi xuống (Fallback) các dịch vụ tiếp theo trong chuỗi ưu tiên đã cấu hình.
- *      - Khi kết nối thành công tới bất kỳ cổng nào thì dừng kiểm tra và bàn giao luồng ngay lập tức.
- *   4. Bảo toàn dữ liệu (Zero Data Loss): Các byte đã đọc mồi (peek bytes) được phát lại đầy đủ cho backend.
+ * 1. Lắng nghe trên 1 cổng công khai (ví dụ 20002).
+ * 2. Tự động nhận diện giao thức (Minecraft, HTTP, WebSocket, SSH...) từ gói
+ * tin đầu tiên.
+ * 3. Phân cấp mức độ ưu tiên (Priority Probing Chain):
+ * - Thử kết nối dịch vụ ưu tiên cao nhất tương ứng với giao thức phát hiện
+ * được.
+ * - Nếu dịch vụ đó chưa khởi động hoặc từ chối (Connection Refused),
+ * tự động rơi xuống (Fallback) các dịch vụ tiếp theo trong chuỗi ưu tiên đã cấu
+ * hình.
+ * - Khi kết nối thành công tới bất kỳ cổng nào thì dừng kiểm tra và bàn giao
+ * luồng ngay lập tức.
+ * 4. Bảo toàn dữ liệu (Zero Data Loss): Các byte đã đọc mồi (peek bytes) được
+ * phát lại đầy đủ cho backend.
  */
 public class SmartMultiplexer {
 
@@ -49,11 +56,11 @@ public class SmartMultiplexer {
 
     // Kích thước bộ đệm và thời gian chờ đọc dữ liệu mồi
     private static final int BUFFER_SIZE = 8192;
-    private static final int PEEK_TIMEOUT_MS = 1500;  // Chờ tối đa 1.5 giây để client gửi gói tin đầu tiên
-    private static final int PROBE_TIMEOUT_MS = 400;   // Timeout thử kết nối tới từng cổng nội bộ
+    private static final int PEEK_TIMEOUT_MS = 1500; // Chờ tối đa 1.5 giây để client gửi gói tin đầu tiên
+    private static final int PROBE_TIMEOUT_MS = 400; // Timeout thử kết nối tới từng cổng nội bộ
 
     public SmartMultiplexer(String name, int listenPort, String bindAddress,
-                            List<MultiplexRule> rules, List<Integer> fallbackChain) {
+            List<MultiplexRule> rules, List<Integer> fallbackChain) {
         this.name = name;
         this.listenPort = listenPort;
         this.bindAddress = bindAddress;
@@ -61,8 +68,14 @@ public class SmartMultiplexer {
         this.fallbackChain = fallbackChain != null ? fallbackChain : new ArrayList<>();
     }
 
+    /** Port thực tế đã bind thành công (có thể khác listenPort nếu auto-detect) */
+    private int actualBoundPort = -1;
+    private String actualBoundAddress = null;
+
     /**
-     * Khởi động máy chủ Smart Multiplexer
+     * Khởi động máy chủ Smart Multiplexer.
+     * Hỗ trợ Smart Bind: tự động thử nhiều cổng và địa chỉ nếu cổng cấu hình bị từ
+     * chối.
      */
     public void start() throws IOException {
         this.threadPool = Executors.newCachedThreadPool(r -> {
@@ -71,23 +84,84 @@ public class SmartMultiplexer {
             return t;
         });
 
-        InetAddress bind = InetAddress.getByName(bindAddress);
-        this.serverSocket = new ServerSocket(listenPort, 50, bind);
-        this.running = true;
+        // Xây dựng danh sách cổng cần thử bind
+        List<Integer> portsToTry = new ArrayList<>();
+        portsToTry.add(listenPort);
 
+        // Tự động phát hiện port từ biến môi trường (Pterodactyl, Docker, ...)
+        int envPort = detectPortFromEnvironment();
+        if (envPort > 0 && envPort != listenPort) {
+            portsToTry.add(0, envPort); // Ưu tiên port từ env var lên đầu
+        }
+
+        // Thêm port phổ biến để fallback nếu cần
+        int[] commonFallbackPorts = { 25565, 8080, 3000, 9090 };
+        for (int p : commonFallbackPorts) {
+            if (!portsToTry.contains(p)) {
+                portsToTry.add(p);
+            }
+        }
+
+        // Xây dựng danh sách địa chỉ cần thử
+        List<String> addressesToTry = new ArrayList<>();
+        addressesToTry.add(bindAddress);
+        if (!"0.0.0.0".equals(bindAddress) && !"127.0.0.1".equals(bindAddress)) {
+            addressesToTry.add("0.0.0.0");
+        }
+        if (!"127.0.0.1".equals(bindAddress)) {
+            addressesToTry.add("127.0.0.1");
+        }
+
+        // Smart Bind: thử lần lượt (port × address) cho đến khi thành công
+        IOException lastError = null;
+        for (int port : portsToTry) {
+            for (String addr : addressesToTry) {
+                try {
+                    InetAddress bind = InetAddress.getByName(addr);
+                    this.serverSocket = new ServerSocket(port, 50, bind);
+                    this.actualBoundPort = port;
+                    this.actualBoundAddress = addr;
+
+                    // Bind thành công!
+                    if (port != listenPort || !addr.equals(bindAddress)) {
+                        OutputLogger.warning(String.format(
+                                "Smart Bind: Không thể mở %s:%d, đã tự động chuyển sang %s:%d",
+                                bindAddress, listenPort, addr, port));
+                    }
+                    break;
+                } catch (BindException e) {
+                    lastError = e;
+                    // Port/address bị từ chối, thử tiếp
+                } catch (IOException e) {
+                    lastError = e;
+                    // "Cannot assign requested address" hoặc lỗi khác, thử tiếp
+                }
+            }
+            if (serverSocket != null && serverSocket.isBound()) {
+                break;
+            }
+        }
+
+        if (serverSocket == null || !serverSocket.isBound()) {
+            throw new IOException("Không thể bind bất kỳ cổng nào! Đã thử: " + portsToTry
+                    + " trên " + addressesToTry + ". Lỗi cuối: "
+                    + (lastError != null ? lastError.getMessage() : "unknown"));
+        }
+
+        this.running = true;
         threadPool.submit(this::acceptLoop);
 
         OutputLogger.success(String.format("Smart Multiplexer [%s] đang mở trên %s:%d",
-            name, bindAddress, listenPort));
+                name, actualBoundAddress, actualBoundPort));
         OutputLogger.info("  [Quy tắc nhận diện ưu tiên]:");
         for (MultiplexRule rule : rules) {
             if (rule.isEnabled()) {
                 OutputLogger.info(String.format("    - Giao thức %s → localhost:%d",
-                    rule.getProtocol().getDescription(), rule.getDefaultTargetPort()));
-                for (var hr : rule.getHostRoutes().entrySet()) {
+                        rule.getProtocol().getDescription(), rule.getDefaultTargetPort()));
+                for (java.util.Map.Entry<String, Integer> hr : rule.getHostRoutes().entrySet()) {
                     OutputLogger.info(String.format("      + Host '%s' → localhost:%d", hr.getKey(), hr.getValue()));
                 }
-                for (var pr : rule.getPathRoutes().entrySet()) {
+                for (java.util.Map.Entry<String, Integer> pr : rule.getPathRoutes().entrySet()) {
                     OutputLogger.info(String.format("      + Path '%s' → localhost:%d", pr.getKey(), pr.getValue()));
                 }
             }
@@ -95,6 +169,33 @@ public class SmartMultiplexer {
         if (!fallbackChain.isEmpty()) {
             OutputLogger.info("  [Chuỗi ưu tiên thử kết nối Fallback]: " + fallbackChain);
         }
+    }
+
+    /**
+     * Tự động phát hiện cổng được phân bổ từ biến môi trường.
+     * Pterodactyl: SERVER_PORT, P_SERVER_PORT
+     * Docker/Generic: PORT, PRIMARY_PORT, ALLOCATED_PORT
+     */
+    private int detectPortFromEnvironment() {
+        String[] envNames = {
+                "SERVER_PORT", "P_SERVER_PORT", "SERVER_ALLOCATION_PORT",
+                "PORT", "PRIMARY_PORT", "ALLOCATED_PORT"
+        };
+        for (String envName : envNames) {
+            String val = System.getenv(envName);
+            if (val != null && !val.isEmpty()) {
+                try {
+                    int port = Integer.parseInt(val.trim());
+                    if (port > 0 && port <= 65535) {
+                        OutputLogger.info(String.format(
+                                "Smart Bind: Phát hiện cổng từ biến môi trường %s=%d", envName, port));
+                        return port;
+                    }
+                } catch (NumberFormatException ignored) {
+                }
+            }
+        }
+        return -1;
     }
 
     /**
@@ -106,7 +207,8 @@ public class SmartMultiplexer {
             if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();
             }
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+        }
 
         if (threadPool != null) {
             threadPool.shutdownNow();
@@ -160,7 +262,8 @@ public class SmartMultiplexer {
                 path = ProtocolSniffer.extractHttpPath(initialData, initialData.length);
             }
 
-            // Bước 3: Xây dựng danh sách cổng ứng viên theo thứ tự ưu tiên (Priority Candidate Chain)
+            // Bước 3: Xây dựng danh sách cổng ứng viên theo thứ tự ưu tiên (Priority
+            // Candidate Chain)
             List<Integer> candidatePorts = buildCandidatePorts(detectedProtocol, host, path);
 
             // Bước 4: Thử kết nối lần lượt theo mức độ ưu tiên (Active Probing / Fallback)
@@ -177,15 +280,15 @@ public class SmartMultiplexer {
 
             if (targetSocket == null) {
                 OutputLogger.warning(String.format(
-                    "Mux [%s] Từ chối kết nối từ %s: Đã thử toàn bộ danh sách cổng %s nhưng không dịch vụ nội bộ nào phản hồi.",
-                    name, clientInfo, candidatePorts));
+                        "Mux [%s] Từ chối kết nối từ %s: Đã thử toàn bộ danh sách cổng %s nhưng không dịch vụ nội bộ nào phản hồi.",
+                        name, clientInfo, candidatePorts));
                 closeQuietly(clientSocket);
                 return;
             }
 
             OutputLogger.info(String.format(
-                "Mux [%s] %s (%s) → Kết nối thành công localhost:%d",
-                name, clientInfo, detectedProtocol.getDescription(), connectedPort));
+                    "Mux [%s] %s (%s) → Kết nối thành công localhost:%d",
+                    name, clientInfo, detectedProtocol.getDescription(), connectedPort));
 
             // Bước 5: Phát lại toàn bộ dữ liệu mồi vào dịch vụ backend đã chọn
             if (initialData.length > 0) {
@@ -233,8 +336,10 @@ public class SmartMultiplexer {
                 baos.write(buffer, 0, read);
             }
         } catch (SocketTimeoutException e) {
-            // Client không gửi gì trong thời gian mồi (ví dụ: SSH server gửi trước, hoặc kết nối chờ)
-        } catch (IOException ignored) {}
+            // Client không gửi gì trong thời gian mồi (ví dụ: SSH server gửi trước, hoặc
+            // kết nối chờ)
+        } catch (IOException ignored) {
+        }
 
         return baos.toByteArray();
     }
@@ -255,14 +360,17 @@ public class SmartMultiplexer {
             }
         }
 
-        // 2. Ưu tiên kế tiếp: Các cổng mặc định của các quy tắc khác (nếu dịch vụ chính tắt)
-        for (MultiplexRule rule : rules) {
-            if (rule.isEnabled() && rule.getDefaultTargetPort() > 0) {
-                candidates.add(rule.getDefaultTargetPort());
+        // 2. Nếu là UNKNOWN (client không gửi mồi hoặc giao thức lạ):
+        // Thử lần lượt các cổng mặc định của từng quy tắc đã bật
+        if (protocol == ProtocolType.UNKNOWN) {
+            for (MultiplexRule rule : rules) {
+                if (rule.isEnabled() && rule.getDefaultTargetPort() > 0) {
+                    candidates.add(rule.getDefaultTargetPort());
+                }
             }
         }
 
-        // 3. Ưu tiên cuối cùng: Toàn bộ danh sách chuỗi Fallback được người dùng cấu hình
+        // 3. Chuỗi Fallback do người dùng cấu hình rõ ràng trong network-config.json
         for (int fallbackPort : fallbackChain) {
             if (fallbackPort > 0) {
                 candidates.add(fallbackPort);
@@ -274,6 +382,7 @@ public class SmartMultiplexer {
 
     /**
      * Thử kết nối đến cổng nội bộ (Probe).
+     * 
      * @return Socket nếu kết nối thành công, null nếu cổng chưa mở hoặc từ chối.
      */
     private Socket tryConnectTarget(int port) {
@@ -313,10 +422,19 @@ public class SmartMultiplexer {
             if (socket != null && !socket.isClosed()) {
                 socket.close();
             }
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+        }
     }
 
-    public int getActiveConnections() { return activeConnections.get(); }
-    public String getName() { return name; }
-    public boolean isRunning() { return running; }
+    public int getActiveConnections() {
+        return activeConnections.get();
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public boolean isRunning() {
+        return running;
+    }
 }
