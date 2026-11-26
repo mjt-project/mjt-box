@@ -22,18 +22,24 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Smart Port Multiplexer v3 — Bộ định tuyến xác minh chủ động theo từng phiên (Per-Session Active Verifier).
+ * Smart Port Multiplexer v3 — Bộ định tuyến xác minh chủ động theo từng phiên
+ * (Per-Session Active Verifier).
  *
  * Quy trình xử lý BẮT BUỘC cho MỖI SESSION (#001, #002, ...):
- *   1. Đọc mồi ban đầu từ Client (hỗ trợ ghép gói TCP phân mảnh, không làm mất dữ liệu).
- *   2. Tầng 1 — Kiểm tra SSH / Shell (chờ tối đa 2 giây xác nhận phản hồi hợp lệ từ backend).
- *      -> Nếu xác nhận thành công: Dừng kiểm tra, giữ nguyên kết nối!
- *   3. Tầng 2 — Kiểm tra HTTP / HTTPS (nếu Tầng 1 không xác nhận thành công):
- *      -> Thử lần lượt từng cổng Web và xác minh backend thực sự phản hồi HTTP/TLS hợp lệ.
- *      -> Nếu xác nhận thành công: Dừng kiểm tra, giữ nguyên kết nối!
- *   4. Tầng 3 — Nhóm Other Round-Robin + Mini AI Offline (Optional Online):
- *      -> Nếu cả SSH và Web đều không xác nhận được, chuyển vào vòng lặp Round-Robin của Other.
- *      -> Mini AI phân loại gói tin, kiểm chứng phản hồi backend chống nối nhầm và tự học Q-Score.
+ * 1. Đọc mồi ban đầu từ Client (hỗ trợ ghép gói TCP phân mảnh, không làm mất dữ
+ * liệu).
+ * 2. Tầng 1 — Kiểm tra SSH / Shell (chờ tối đa 2 giây xác nhận phản hồi hợp lệ
+ * từ backend).
+ * -> Nếu xác nhận thành công: Dừng kiểm tra, giữ nguyên kết nối!
+ * 3. Tầng 2 — Kiểm tra HTTP / HTTPS (nếu Tầng 1 không xác nhận thành công):
+ * -> Thử lần lượt từng cổng Web và xác minh backend thực sự phản hồi HTTP/TLS
+ * hợp lệ.
+ * -> Nếu xác nhận thành công: Dừng kiểm tra, giữ nguyên kết nối!
+ * 4. Tầng 3 — Nhóm Other Round-Robin + Mini AI Offline (Optional Online):
+ * -> Nếu cả SSH và Web đều không xác nhận được, chuyển vào vòng lặp Round-Robin
+ * của Other.
+ * -> Mini AI phân loại gói tin, kiểm chứng phản hồi backend chống nối nhầm và
+ * tự học Q-Score.
  */
 public class SmartMultiplexer {
 
@@ -42,9 +48,9 @@ public class SmartMultiplexer {
     private final String bindAddress;
 
     // ===== 3 NHÓM CỔNG TÁCH BIỆT (volatile cho Hot-Reload) =====
-    private volatile List<Integer> webPorts;    // Tầng 2: HTTP, HTTPS, WebSocket
-    private volatile List<Integer> shellPorts;  // Tầng 1: SSH, SFTP, FTP
-    private volatile List<Integer> otherPorts;  // Tầng 3: Minecraft, game, dịch vụ khác
+    private volatile List<Integer> webPorts; // Tầng 2: HTTP, HTTPS, WebSocket
+    private volatile List<Integer> shellPorts; // Tầng 1: SSH, SFTP, FTP
+    private volatile List<Integer> otherPorts; // Tầng 3: Minecraft, game, dịch vụ khác
 
     private volatile int sshCheckTimeoutMs;
     private volatile int webCheckTimeoutMs;
@@ -64,11 +70,11 @@ public class SmartMultiplexer {
     private String actualBoundAddress = null;
 
     // Hằng số mạng
-    private static final int BUFFER_SIZE = 8192;
+    private static final int BUFFER_SIZE = 16384;
     private static final int PEEK_TIMEOUT_MS = 1500;
     private static final int FRAGMENT_WAIT_MS = 100;
     private static final int PROBE_CONNECT_TIMEOUT_MS = 400;
-    private static final int OTHER_VERIFY_TIMEOUT_MS = 1000;
+    private static final int OTHER_VERIFY_TIMEOUT_MS = 1500;
 
     /**
      * Kết quả xác minh kết nối thành công tới một cổng backend
@@ -81,7 +87,7 @@ public class SmartMultiplexer {
         final String aiLabel; // Khác null nếu đi qua Tầng 3 (Mini AI)
 
         VerifiedRoute(int port, Socket backendSocket, byte[] backendReply,
-                      String stageLabel, String aiLabel) {
+                String stageLabel, String aiLabel) {
             this.port = port;
             this.backendSocket = backendSocket;
             this.backendReply = backendReply != null ? backendReply : new byte[0];
@@ -106,7 +112,8 @@ public class SmartMultiplexer {
     }
 
     /**
-     * Lưu cổng Web dự phòng tạm thời (trả 404 hoặc xử lý chậm) để thử Other trước khi rơi về 404
+     * Lưu cổng Web dự phòng tạm thời (trả 404 hoặc xử lý chậm) để thử Other trước
+     * khi rơi về 404
      */
     private static class WebFallbackCandidate {
         int softNotFoundPort = -1;
@@ -114,9 +121,9 @@ public class SmartMultiplexer {
     }
 
     public SmartMultiplexer(String name, int listenPort, String bindAddress,
-                            List<Integer> webPorts, List<Integer> shellPorts,
-                            List<Integer> otherPorts, int sshCheckTimeoutMs,
-                            int webCheckTimeoutMs, MiniAiEngine miniAi) {
+            List<Integer> webPorts, List<Integer> shellPorts,
+            List<Integer> otherPorts, int sshCheckTimeoutMs,
+            int webCheckTimeoutMs, MiniAiEngine miniAi) {
         this.name = name;
         this.listenPort = listenPort;
         this.bindAddress = bindAddress;
@@ -133,7 +140,7 @@ public class SmartMultiplexer {
     // ==========================================
 
     public void updateConfig(List<Integer> newWebPorts, List<Integer> newShellPorts,
-                             List<Integer> newOtherPorts, int newSshTimeout, int newWebTimeout) {
+            List<Integer> newOtherPorts, int newSshTimeout, int newWebTimeout) {
         List<Integer> oldWeb = this.webPorts;
         List<Integer> oldShell = this.shellPorts;
         List<Integer> oldOther = this.otherPorts;
@@ -141,8 +148,10 @@ public class SmartMultiplexer {
         this.webPorts = newWebPorts != null ? new ArrayList<>(newWebPorts) : new ArrayList<>();
         this.shellPorts = newShellPorts != null ? new ArrayList<>(newShellPorts) : new ArrayList<>();
         this.otherPorts = newOtherPorts != null ? new ArrayList<>(newOtherPorts) : new ArrayList<>();
-        if (newSshTimeout > 0) this.sshCheckTimeoutMs = newSshTimeout;
-        if (newWebTimeout > 0) this.webCheckTimeoutMs = newWebTimeout;
+        if (newSshTimeout > 0)
+            this.sshCheckTimeoutMs = newSshTimeout;
+        if (newWebTimeout > 0)
+            this.webCheckTimeoutMs = newWebTimeout;
 
         boolean changed = !oldWeb.equals(this.webPorts)
                 || !oldShell.equals(this.shellPorts)
@@ -173,7 +182,7 @@ public class SmartMultiplexer {
             portsToTry.add(0, envPort);
         }
 
-        int[] commonPorts = {25565, 8080, 3000, 9090};
+        int[] commonPorts = { 25565, 8080, 3000, 9090 };
         for (int p : commonPorts) {
             if (!portsToTry.contains(p)) {
                 portsToTry.add(p);
@@ -244,7 +253,8 @@ public class SmartMultiplexer {
             if (serverSocket != null && !serverSocket.isClosed()) {
                 serverSocket.close();
             }
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+        }
 
         if (threadPool != null) {
             threadPool.shutdownNow();
@@ -254,8 +264,8 @@ public class SmartMultiplexer {
 
     private int detectPortFromEnvironment() {
         String[] envNames = {
-            "SERVER_PORT", "P_SERVER_PORT", "SERVER_ALLOCATION_PORT",
-            "PORT", "PRIMARY_PORT", "ALLOCATED_PORT"
+                "SERVER_PORT", "P_SERVER_PORT", "SERVER_ALLOCATION_PORT",
+                "PORT", "PRIMARY_PORT", "ALLOCATED_PORT"
         };
         for (String envName : envNames) {
             String val = System.getenv(envName);
@@ -267,7 +277,8 @@ public class SmartMultiplexer {
                                 "Smart Bind: Phát hiện cổng từ biến môi trường %s=%d", envName, port));
                         return port;
                     }
-                } catch (NumberFormatException ignored) {}
+                } catch (NumberFormatException ignored) {
+                }
             }
         }
         return -1;
@@ -315,7 +326,8 @@ public class SmartMultiplexer {
             // Tầng 1: SSH / Shell (chờ tối đa 2 giây xác nhận phản hồi)
             VerifiedRoute verified = tryShellStage(sessionTag, initialData, clientHint);
 
-            // Nếu gói mồi ban đầu rỗng (0 byte) và Tầng 1 chưa khớp, tranh thủ đọc thêm 150ms
+            // Nếu gói mồi ban đầu rỗng (0 byte) và Tầng 1 chưa khớp, tranh thủ đọc thêm
+            // 150ms
             // phòng trường hợp trình duyệt gửi HTTP trễ trước khi vào Tầng 2
             if (verified == null && initialData.length == 0) {
                 byte[] lateData = tryQuickExtraPeek(clientSocket, 150);
@@ -336,7 +348,8 @@ public class SmartMultiplexer {
                 verified = tryOtherStage(sessionTag, initialData, clientHint);
             }
 
-            // Dự phòng Web (nếu Other cũng không có cổng nào nhận và Web từng trả 404 hoặc giữ luồng chậm)
+            // Dự phòng Web (nếu Other cũng không có cổng nào nhận và Web từng trả 404 hoặc
+            // giữ luồng chậm)
             if (verified == null) {
                 verified = resolveWebFallback(initialData, webFallback);
             }
@@ -364,7 +377,8 @@ public class SmartMultiplexer {
             clientSocket.setSoTimeout(0);
             verified.backendSocket.setSoTimeout(0);
 
-            // Nối đường ống dữ liệu hai chiều và đo lưu lượng phục vụ Mini AI học kết quả phiên
+            // Nối đường ống dữ liệu hai chiều và đo lưu lượng phục vụ Mini AI học kết quả
+            // phiên
             final Socket finalTarget = verified.backendSocket;
             final AtomicLong bytesC2T = new AtomicLong(initialData.length);
             final AtomicLong bytesT2C = new AtomicLong(verified.backendReply.length);
@@ -405,7 +419,8 @@ public class SmartMultiplexer {
         }
 
         // Nếu client đã gửi rõ gói tin Web (HTTP/HTTPS) hoặc Minecraft,
-        // Tầng SSH chắc chắn không tương thích → bỏ qua ngay sang Tầng 2 để không tốn 2s cho mỗi file ảnh/CSS.
+        // Tầng SSH chắc chắn không tương thích → bỏ qua ngay sang Tầng 2 để không tốn
+        // 2s cho mỗi file ảnh/CSS.
         if (clientHint == ProtocolType.HTTP || clientHint == ProtocolType.HTTPS_TLS
                 || clientHint == ProtocolType.MINECRAFT) {
             return null;
@@ -448,13 +463,14 @@ public class SmartMultiplexer {
     // ==========================================
 
     private VerifiedRoute tryWebStage(String sessionTag, byte[] initialData,
-                                      ProtocolType clientHint, WebFallbackCandidate fallback) {
+            ProtocolType clientHint, WebFallbackCandidate fallback) {
         List<Integer> ports = this.webPorts;
         if (ports == null || ports.isEmpty()) {
             return null;
         }
 
-        // Nếu client gửi rõ SSH hoặc Minecraft hoặc vẫn 0 byte (HTTP server không bao giờ trả lời 0 byte)
+        // Nếu client gửi rõ SSH hoặc Minecraft hoặc vẫn 0 byte (HTTP server không bao
+        // giờ trả lời 0 byte)
         if (clientHint == ProtocolType.SSH || clientHint == ProtocolType.MINECRAFT
                 || initialData.length == 0) {
             return null;
@@ -485,7 +501,8 @@ public class SmartMultiplexer {
                     }
 
                     // HTTP: CHỈ xác nhận thành công khi mã trạng thái là 1xx/2xx/3xx/401/403
-                    // Nếu 404/405/501 hoặc là HTML trả về cho yêu cầu MCPE (/v1/join) thì không xác nhận tại đây!
+                    // Nếu 404/405/501 hoặc là HTML trả về cho yêu cầu MCPE (/v1/join) thì không xác
+                    // nhận tại đây!
                     if (ProtocolSniffer.isHttpConfirmedSuccess(reply.data, reply.data.length)) {
                         if (isMcpeJoin && ProtocolSniffer.isHtmlHttpResponse(reply.data, reply.data.length)) {
                             closeQuietly(backend);
@@ -497,7 +514,8 @@ public class SmartMultiplexer {
                                 "Tầng 2: HTTP" + codeTag + " xác nhận có dữ liệu", null);
                     }
 
-                    // Ghi nhớ cổng web sống nếu trả 404 để trả lỗi 404 cho trình duyệt nếu Other cũng không nhận
+                    // Ghi nhớ cổng web sống nếu trả 404 để trả lỗi 404 cho trình duyệt nếu Other
+                    // cũng không nhận
                     if (ProtocolSniffer.isHttpSoftNotFound(reply.data, reply.data.length)
                             && fallback.softNotFoundPort == -1) {
                         fallback.softNotFoundPort = port;
@@ -551,18 +569,22 @@ public class SmartMultiplexer {
             return null;
         }
 
-        // 1. Gọi Mini AI phân loại gói tin (Offline 100% mặc định, Online fallback nếu bật)
+        // 1. Gọi Mini AI phân loại gói tin (Offline 100% mặc định, Online fallback nếu
+        // bật)
         MiniAiEngine.AiClassification aiClass = miniAi.classify(initialData);
 
-        // 2. Xoay vòng Round-Robin cho đúng Session này, sau đó để AI sắp xếp thích ứng nếu có cổng lỗi nặng
+        // 2. Xoay vòng Round-Robin cho đúng Session này, sau đó để AI sắp xếp thích ứng
+        // nếu có cổng lỗi nặng
         List<Integer> rotated = buildRoundRobinList(ports);
         List<Integer> candidates = miniAi.applyAdaptiveOrder(aiClass.label, rotated);
 
         int silentAliveFallbackPort = -1;
+        StringBuilder trace = new StringBuilder();
 
         for (int port : candidates) {
             Socket backend = tryConnectTarget(port);
             if (backend == null) {
+                trace.append(port).append("=Refused, ");
                 continue;
             }
 
@@ -576,18 +598,21 @@ public class SmartMultiplexer {
                 ProbeReadResult reply = readBackendVerification(backend, OTHER_VERIFY_TIMEOUT_MS);
 
                 if (reply.eof && reply.data.length == 0) {
-                    // Backend đóng kết nối ngay lập tức không phản hồi → thử cổng Round-Robin tiếp theo
+                    // Backend đóng kết nối ngay lập tức không phản hồi → thử cổng Round-Robin tiếp
+                    // theo
+                    trace.append(port).append("=Closed, ");
                     miniAi.recordVerificationFailure(aiClass.label, port);
                     closeQuietly(backend);
                     continue;
                 }
 
                 if (reply.data.length > 0) {
-                    MiniAiEngine.BackendVerdict verdict =
-                            miniAi.verifyBackendResponse(aiClass, reply.data, reply.data.length);
+                    MiniAiEngine.BackendVerdict verdict = miniAi.verifyBackendResponse(aiClass, reply.data,
+                            reply.data.length);
 
                     if (verdict == MiniAiEngine.BackendVerdict.MISMATCH_REJECT) {
                         // AI phát hiện nối nhầm dịch vụ (ví dụ trả về HTTP/SSH cho gói game)
+                        trace.append(port).append("=Mismatch, ");
                         miniAi.recordVerificationFailure(aiClass.label, port);
                         closeQuietly(backend);
                         continue;
@@ -610,27 +635,38 @@ public class SmartMultiplexer {
                                 aiClass.label, aiClass.source, aiClass.confidence * 100);
                         return new VerifiedRoute(port, backend, new byte[0], info, aiClass.label);
                     } else if (miniAi.allowsSilentFallback(aiClass)) {
-                        // Giao thức cần phản hồi ngay (vd Minecraft Ping): ghi nhớ dự phòng, thử nốt các cổng còn lại
+                        // Giao thức cần phản hồi ngay (vd Minecraft Ping): ghi nhớ dự phòng, thử nốt
+                        // các cổng còn lại
+                        trace.append(port).append("=Silent, ");
                         if (silentAliveFallbackPort == -1) {
                             silentAliveFallbackPort = port;
                         }
                         closeQuietly(backend);
                     } else {
                         // HTTP/MCPE/TLS tuyệt đối không nhận cổng im lặng
+                        trace.append(port).append("=Timeout, ");
                         miniAi.recordVerificationFailure(aiClass.label, port);
                         closeQuietly(backend);
                     }
                 } else {
+                    trace.append(port).append("=NoReply, ");
                     closeQuietly(backend);
                 }
 
             } catch (IOException e) {
+                trace.append(port).append("=Err, ");
                 miniAi.recordVerificationFailure(aiClass.label, port);
                 closeQuietly(backend);
             }
         }
 
-        // Nếu không cổng nào trả lời chủ động nhưng có cổng mở im lặng (vd Minecraft login bị trễ)
+        if (silentAliveFallbackPort <= 0 && trace.length() > 0) {
+            OutputLogger.info(String.format("Mux [%s|%s] Trace Other [%s]: %s",
+                    name, sessionTag, aiClass.label, trace.substring(0, trace.length() - 2)));
+        }
+
+        // Nếu không cổng nào trả lời chủ động nhưng có cổng mở im lặng (vd Minecraft
+        // login bị trễ)
         if (silentAliveFallbackPort > 0) {
             Socket backend = tryConnectTarget(silentAliveFallbackPort);
             if (backend != null) {
@@ -688,34 +724,52 @@ public class SmartMultiplexer {
             }
             baos.write(buffer, 0, read);
 
-            // Chống phân mảnh TCP: nếu gói đầu tiên quá ngắn (<16 byte), đọc thêm tối đa vài lần ngắn
+            // Chống phân mảnh TCP: nếu gói đầu tiên quá ngắn (<16 byte), đọc thêm tối đa
+            // vài lần ngắn
             long deadline = System.currentTimeMillis() + 250;
             while (baos.size() < 16 && System.currentTimeMillis() < deadline) {
                 clientSocket.setSoTimeout(FRAGMENT_WAIT_MS);
                 int more = in.read(buffer);
-                if (more <= 0) break;
+                if (more <= 0)
+                    break;
                 baos.write(buffer, 0, more);
             }
 
             byte[] current = baos.toByteArray();
-            // Nếu là HTTP mà header chưa hoàn chỉnh (\r\n\r\n), gom thêm để backend HTTP trả lời ngay
-            if (ProtocolSniffer.isHttp(current, current.length)
-                    && !ProtocolSniffer.isCompleteHttpHeader(current, current.length)) {
-                long httpDeadline = System.currentTimeMillis() + 200;
-                while (baos.size() < BUFFER_SIZE && System.currentTimeMillis() < httpDeadline) {
-                    clientSocket.setSoTimeout(60);
-                    int more = in.read(buffer);
-                    if (more <= 0) break;
-                    baos.write(buffer, 0, more);
-                    current = baos.toByteArray();
-                    if (ProtocolSniffer.isCompleteHttpHeader(current, current.length)) {
-                        break;
+            // Nếu là HTTP mà header chưa hoàn chỉnh (\r\n\r\n) hoặc có Content-Length (vd
+            // POST /v1/join SDP),
+            // gom đủ để backend HTTP/MCPE trả lời ngay
+            if (ProtocolSniffer.isHttp(current, current.length)) {
+                if (!ProtocolSniffer.isCompleteHttpHeader(current, current.length)) {
+                    long httpDeadline = System.currentTimeMillis() + 200;
+                    while (baos.size() < BUFFER_SIZE && System.currentTimeMillis() < httpDeadline) {
+                        clientSocket.setSoTimeout(60);
+                        int more = in.read(buffer);
+                        if (more <= 0)
+                            break;
+                        baos.write(buffer, 0, more);
+                        current = baos.toByteArray();
+                        if (ProtocolSniffer.isCompleteHttpHeader(current, current.length)) {
+                            break;
+                        }
+                    }
+                }
+                int expectedTotalLen = computeExpectedHttpBytes(current);
+                if (expectedTotalLen > current.length && expectedTotalLen <= BUFFER_SIZE) {
+                    long bodyDeadline = System.currentTimeMillis() + 200;
+                    while (baos.size() < expectedTotalLen && System.currentTimeMillis() < bodyDeadline) {
+                        clientSocket.setSoTimeout(60);
+                        int more = in.read(buffer);
+                        if (more <= 0)
+                            break;
+                        baos.write(buffer, 0, more);
                     }
                 }
             } else {
-                // Nếu là Minecraft Handshake mà chưa có Packet 2 (Status Request / Login Start), đợi thêm 80ms
-                ProtocolSniffer.MinecraftHandshakeInfo mc =
-                        ProtocolSniffer.inspectMinecraftHandshake(current, current.length);
+                // Nếu là Minecraft Handshake mà chưa có Packet 2 (Status Request / Login
+                // Start), đợi thêm 80ms
+                ProtocolSniffer.MinecraftHandshakeInfo mc = ProtocolSniffer.inspectMinecraftHandshake(current,
+                        current.length);
                 if (mc != null && !mc.hasExtraPacketBytes) {
                     clientSocket.setSoTimeout(80);
                     int more = in.read(buffer);
@@ -726,7 +780,8 @@ public class SmartMultiplexer {
             }
         } catch (SocketTimeoutException e) {
             // Hết thời gian chờ mồi/phân mảnh là bình thường
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+        }
 
         return baos.toByteArray();
     }
@@ -741,7 +796,8 @@ public class SmartMultiplexer {
                 System.arraycopy(buffer, 0, out, 0, read);
                 return out;
             }
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+        }
         return new byte[0];
     }
 
@@ -767,6 +823,31 @@ public class SmartMultiplexer {
         }
     }
 
+    private static int computeExpectedHttpBytes(byte[] data) {
+        String text = new String(data, java.nio.charset.StandardCharsets.ISO_8859_1);
+        int headerEnd = text.indexOf("\r\n\r\n");
+        int sepLen = 4;
+        if (headerEnd < 0) {
+            headerEnd = text.indexOf("\n\n");
+            sepLen = 2;
+        }
+        if (headerEnd < 0)
+            return -1;
+        String headersLower = text.substring(0, headerEnd).toLowerCase(Locale.ROOT);
+        int clIdx = headersLower.indexOf("content-length:");
+        if (clIdx < 0)
+            return headerEnd + sepLen;
+        int lineEnd = headersLower.indexOf('\n', clIdx);
+        String val = (lineEnd > clIdx ? headersLower.substring(clIdx + 15, lineEnd)
+                : headersLower.substring(clIdx + 15)).trim();
+        try {
+            int bodyLen = Integer.parseInt(val);
+            return bodyLen > 0 ? headerEnd + sepLen + bodyLen : headerEnd + sepLen;
+        } catch (NumberFormatException e) {
+            return headerEnd + sepLen;
+        }
+    }
+
     private Socket tryConnectTarget(int port) {
         Socket socket = new Socket();
         try {
@@ -774,7 +855,15 @@ public class SmartMultiplexer {
             return socket;
         } catch (IOException e) {
             closeQuietly(socket);
-            return null;
+            // Thử fallback IPv6 ::1 phòng trường hợp service chỉ lắng nghe IPv6
+            Socket v6 = new Socket();
+            try {
+                v6.connect(new InetSocketAddress("::1", port), PROBE_CONNECT_TIMEOUT_MS);
+                return v6;
+            } catch (IOException e2) {
+                closeQuietly(v6);
+                return null;
+            }
         }
     }
 
@@ -801,16 +890,31 @@ public class SmartMultiplexer {
             if (socket != null && !socket.isClosed()) {
                 socket.close();
             }
-        } catch (IOException ignored) {}
+        } catch (IOException ignored) {
+        }
     }
 
     // ==========================================
     // GETTERS
     // ==========================================
 
-    public int getActiveConnections() { return activeConnections.get(); }
-    public String getName() { return name; }
-    public boolean isRunning() { return running; }
-    public int getActualBoundPort() { return actualBoundPort; }
-    public String getActualBoundAddress() { return actualBoundAddress; }
+    public int getActiveConnections() {
+        return activeConnections.get();
+    }
+
+    public String getName() {
+        return name;
+    }
+
+    public boolean isRunning() {
+        return running;
+    }
+
+    public int getActualBoundPort() {
+        return actualBoundPort;
+    }
+
+    public String getActualBoundAddress() {
+        return actualBoundAddress;
+    }
 }

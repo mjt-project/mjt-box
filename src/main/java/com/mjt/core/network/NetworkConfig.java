@@ -56,8 +56,10 @@ public class NetworkConfig {
 
     // ===== MINECRAFT ROUTER =====
     private boolean minecraftRouterEnabled;
+    private String minecraftRouterType; // "tcp", "udp", hoặc "both" ("tcp/udp")
     private int minecraftRouterPort;
     private Map<String, Integer> minecraftRoutes;
+    private List<Integer> minecraftUdpTargets;
     private int minecraftDefaultPort;
 
     public NetworkConfig() {
@@ -82,8 +84,10 @@ public class NetworkConfig {
         this.mappings = new ArrayList<>();
 
         this.minecraftRouterEnabled = false;
+        this.minecraftRouterType = "tcp";
         this.minecraftRouterPort = 25000;
         this.minecraftRoutes = new LinkedHashMap<>();
+        this.minecraftUdpTargets = new ArrayList<>();
         this.minecraftDefaultPort = 25565;
     }
 
@@ -184,13 +188,37 @@ public class NetworkConfig {
         String mcSection = extractSection(json, "\"minecraft_router\"");
         if (mcSection != null) {
             config.minecraftRouterEnabled = parseBoolean(mcSection, "enabled", config.minecraftRouterEnabled);
+            config.minecraftRouterType = parseString(mcSection, "type", config.minecraftRouterType)
+                    .trim().toLowerCase(java.util.Locale.ROOT);
             config.minecraftRouterPort = parseInt(mcSection, "listen_port", config.minecraftRouterPort);
             config.minecraftDefaultPort = parseInt(mcSection, "default_port", config.minecraftDefaultPort);
 
-            String routeRegex = "\"hostname\"\\s*:\\s*\"([^\"]+)\".*?\"target_port\"\\s*:\\s*(\\d+)";
-            Matcher rMatcher = Pattern.compile(routeRegex, Pattern.DOTALL).matcher(mcSection);
-            while (rMatcher.find()) {
-                config.minecraftRoutes.put(rMatcher.group(1), Integer.parseInt(rMatcher.group(2)));
+            int routesIdx = mcSection.indexOf("\"routes\"");
+            if (routesIdx >= 0) {
+                int arrOpen = mcSection.indexOf('[', routesIdx);
+                int arrClose = mcSection.indexOf(']', arrOpen);
+                if (arrOpen >= 0 && arrClose > arrOpen) {
+                    String routesArr = mcSection.substring(arrOpen + 1, arrClose);
+                    Matcher objMatcher = Pattern.compile("\\{([^}]*)\\}", Pattern.DOTALL).matcher(routesArr);
+                    while (objMatcher.find()) {
+                        String obj = objMatcher.group(1);
+                        String host = parseString(obj, "hostname", "");
+                        int targetPort = parseInt(obj, "target_port", -1);
+                        String routeType = parseString(obj, "type", config.minecraftRouterType)
+                                .trim().toLowerCase(java.util.Locale.ROOT);
+                        if (targetPort <= 0) continue;
+
+                        boolean isUdpRoute = routeType.contains("udp") || "both".equals(routeType);
+                        boolean isTcpRoute = routeType.contains("tcp") || "both".equals(routeType) || routeType.isEmpty();
+
+                        if (isTcpRoute && !host.isEmpty()) {
+                            config.minecraftRoutes.put(host, targetPort);
+                        }
+                        if (isUdpRoute && !config.minecraftUdpTargets.contains(targetPort)) {
+                            config.minecraftUdpTargets.add(targetPort);
+                        }
+                    }
+                }
             }
         }
 
@@ -302,7 +330,7 @@ public class NetworkConfig {
                 "\n" +
                 "    \"web_ports\": [8080, 8081],\n" +
                 "    \"shell_ports\": [2222],\n" +
-                "    \"other_ports\": [25566, 25567]\n" +
+                "    \"other_ports\": [25566, 25567, 19132]\n" +
                 "  },\n" +
                 "\n" +
                 "  \"ai_assistant\": {\n" +
@@ -316,9 +344,10 @@ public class NetworkConfig {
                 "  \"port_forwarding\": [],\n" +
                 "\n" +
                 "  \"minecraft_router\": {\n" +
-                "    \"enabled\": false,\n" +
-                "    \"listen_port\": 25000,\n" +
-                "    \"default_port\": 25565,\n" +
+                "    \"enabled\": true,\n" +
+                "    \"type\": \"udp\",\n" +
+                "    \"listen_port\": 25565,\n" +
+                "    \"default_port\": 19132,\n" +
                 "    \"routes\": []\n" +
                 "  }\n" +
                 "}\n";
@@ -356,7 +385,9 @@ public class NetworkConfig {
     public List<PortMapping> getMappings() { return mappings; }
 
     public boolean isMinecraftRouterEnabled() { return minecraftRouterEnabled; }
+    public String getMinecraftRouterType() { return minecraftRouterType; }
     public int getMinecraftRouterPort() { return minecraftRouterPort; }
     public Map<String, Integer> getMinecraftRoutes() { return minecraftRoutes; }
+    public List<Integer> getMinecraftUdpTargets() { return minecraftUdpTargets; }
     public int getMinecraftDefaultPort() { return minecraftDefaultPort; }
 }

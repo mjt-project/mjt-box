@@ -207,7 +207,7 @@ public class ProtocolSniffer {
      * Trả về -1 nếu không phải HTTP response hợp lệ.
      */
     public static int parseHttpStatusCode(byte[] data, int length) {
-        if (data == null || length < 12)
+        if (data == null || length < 10)
             return -1;
         String head = new String(data, 0, Math.min(length, 64), StandardCharsets.US_ASCII);
         if (!head.startsWith("HTTP/"))

@@ -17,7 +17,7 @@ import java.util.List;
  *   1. Smart Multiplexer v3: Kiểm tra xác minh chủ động từng tầng theo mỗi session
  *      (SSH 2s → HTTP/HTTPS → Other Round-Robin + Mini AI Offline/Online).
  *   2. Port Forwarding: Chuyển tiếp cổng TCP/UDP riêng biệt.
- *   3. Minecraft Router: Định tuyến virtual host.
+ *   3. Minecraft Router: Định tuyến Java (TCP) & Bedrock/MCPE (UDP / TCP+UDP).
  *   4. Hot-Reload: Tự động theo dõi network-config.json và cập nhật realtime.
  */
 public class VirtualNetworkManager {
@@ -130,20 +130,11 @@ public class VirtualNetworkManager {
             }
         }
 
-        // ===== 3. KHỞI ĐỘNG MINECRAFT ROUTER ĐỘC LẬP (NẾU CÓ) =====
-        if (config.isMinecraftRouterEnabled() && !config.getMinecraftRoutes().isEmpty()) {
-            try {
-                this.minecraftRouter = new MinecraftRouter(
-                    config.getMinecraftRouterPort(),
-                    config.getBindAddress(),
-                    config.getMinecraftRoutes(),
-                    config.getMinecraftDefaultPort()
-                );
-                minecraftRouter.start();
+        // ===== 3. KHỞI ĐỘNG MINECRAFT ROUTER (TCP JAVA / UDP MCPE / BOTH) =====
+        if (config.isMinecraftRouterEnabled()) {
+            if (startMinecraftRouter(config)) {
                 successCount++;
-            } catch (IOException e) {
-                OutputLogger.error("Không thể khởi động Minecraft Router trên cổng "
-                    + config.getMinecraftRouterPort() + ": " + e.getMessage());
+            } else {
                 failCount++;
             }
         }
@@ -164,6 +155,29 @@ public class VirtualNetworkManager {
 
         if (config.isAutoReload()) {
             startHotReload();
+        }
+    }
+
+    private boolean startMinecraftRouter(NetworkConfig cfg) {
+        int muxPort = (smartMultiplexer != null && smartMultiplexer.isRunning())
+                ? smartMultiplexer.getActualBoundPort() : -1;
+        try {
+            this.minecraftRouter = new MinecraftRouter(
+                cfg.getMinecraftRouterPort(),
+                cfg.getBindAddress(),
+                cfg.getMinecraftRouterType(),
+                cfg.getMinecraftRoutes(),
+                cfg.getMinecraftUdpTargets(),
+                cfg.getMinecraftDefaultPort(),
+                muxPort
+            );
+            minecraftRouter.start();
+            return true;
+        } catch (IOException e) {
+            OutputLogger.error("Không thể khởi động Minecraft Router ("
+                + cfg.getMinecraftRouterType() + "): " + e.getMessage());
+            this.minecraftRouter = null;
+            return false;
         }
     }
 
@@ -231,6 +245,28 @@ public class VirtualNetworkManager {
                     newConfig.getSshCheckTimeoutMs(),
                     newConfig.getWebCheckTimeoutMs()
                 );
+            }
+
+            // Hot-Reload cho Minecraft Router (bật/tắt/đổi type/đổi routes)
+            if (newConfig.isMinecraftRouterEnabled()) {
+                if (minecraftRouter != null && minecraftRouter.isRunning()) {
+                    if (!newConfig.getMinecraftRouterType().equals(minecraftRouter.getRouterType())) {
+                        minecraftRouter.stop();
+                        minecraftRouter = null;
+                        startMinecraftRouter(newConfig);
+                    } else {
+                        minecraftRouter.updateRouting(
+                            newConfig.getMinecraftRoutes(),
+                            newConfig.getMinecraftUdpTargets(),
+                            newConfig.getMinecraftDefaultPort()
+                        );
+                    }
+                } else {
+                    startMinecraftRouter(newConfig);
+                }
+            } else if (minecraftRouter != null) {
+                minecraftRouter.stop();
+                minecraftRouter = null;
             }
 
             this.config = newConfig;

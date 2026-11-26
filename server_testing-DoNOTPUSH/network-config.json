@@ -25,9 +25,12 @@
   "port_forwarding": [],
 
   "minecraft_router": {
-    "enabled": false,
-    "listen_port": 25000,
-    "default_port": 25565,
-    "routes": []
+    "enabled": true,
+    "type": "udp",
+    "listen_port": 25565,
+    "default_port": 19132,
+    "routes": [
+      { "hostname": "mcpe", "target_port": 19132, "type": "udp" }
+    ]
   }
 }
