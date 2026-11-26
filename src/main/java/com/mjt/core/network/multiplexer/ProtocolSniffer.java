@@ -1,12 +1,11 @@
 package com.mjt.core.network.multiplexer;
 
 import java.nio.charset.StandardCharsets;
-import java.util.Arrays;
 import java.util.Locale;
 
 /**
  * Bộ phân tích và nhận diện giao thức (Zero-Dependency Protocol Sniffer).
- * Nhận diện giao thức từ các byte đầu tiên (Preambles / Handshakes) được gửi từ Client.
+ * Hỗ trợ kiểm tra cả gói tin từ Client (Request/Handshake) và phản hồi từ Backend (Response/Banner).
  */
 public class ProtocolSniffer {
 
@@ -16,29 +15,42 @@ public class ProtocolSniffer {
     };
 
     /**
-     * Nhận diện loại giao thức từ dữ liệu mồi (peek bytes)
+     * Thông tin chi tiết khi giải mã gói Handshake Minecraft Java
+     */
+    public static class MinecraftHandshakeInfo {
+        public final int protocolVersion;
+        public final String hostname;
+        public final int nextState;
+        public final boolean hasExtraPacketBytes;
+
+        public MinecraftHandshakeInfo(int protocolVersion, String hostname, int nextState, boolean hasExtraPacketBytes) {
+            this.protocolVersion = protocolVersion;
+            this.hostname = hostname;
+            this.nextState = nextState;
+            this.hasExtraPacketBytes = hasExtraPacketBytes;
+        }
+    }
+
+    /**
+     * Nhận diện loại giao thức từ dữ liệu mồi của Client
      */
     public static ProtocolType detect(byte[] data, int length) {
         if (data == null || length <= 0) {
             return ProtocolType.UNKNOWN;
         }
 
-        // 1. Kiểm tra HTTP / WebSocket
         if (isHttp(data, length)) {
             return ProtocolType.HTTP;
         }
 
-        // 2. Kiểm tra TLS / HTTPS (Byte 0x16 là Handshake, 0x03 là SSL 3.0 / TLS 1.0+)
         if (isTls(data, length)) {
             return ProtocolType.HTTPS_TLS;
         }
 
-        // 3. Kiểm tra SSH (Bắt đầu bằng "SSH-")
         if (isSsh(data, length)) {
             return ProtocolType.SSH;
         }
 
-        // 4. Kiểm tra Minecraft (Handshake Packet 0x00 hoặc Legacy Ping 0xFE)
         if (isMinecraft(data, length)) {
             return ProtocolType.MINECRAFT;
         }
@@ -46,91 +58,61 @@ public class ProtocolSniffer {
         return ProtocolType.UNKNOWN;
     }
 
-    /**
-     * Kiểm tra xem các byte có khớp với HTTP Request không
-     */
+    // ==========================================
+    // KIỂM TRA DỮ LIỆU CLIENT (INBOUND)
+    // ==========================================
+
     public static boolean isHttp(byte[] data, int length) {
-        if (length < 3) return false;
-        String prefix = new String(data, 0, Math.min(length, 12), StandardCharsets.US_ASCII);
+        if (length < 4) return false;
+        String prefix = new String(data, 0, Math.min(length, 16), StandardCharsets.US_ASCII);
         for (String method : HTTP_METHODS) {
             if (prefix.startsWith(method)) {
                 return true;
             }
         }
-        // Kiểm tra HTTP/2 Connection Preface: "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
-        if (prefix.startsWith("PRI *")) {
-            return true;
-        }
-        return false;
+        return prefix.startsWith("PRI * HTTP/2");
     }
 
     /**
-     * Kiểm tra TLS ClientHello (HTTPS / WSS / TLS)
+     * Kiểm tra xem dữ liệu HTTP đã chứa dấu kết thúc header (\r\n\r\n hoặc \n\n) chưa
      */
+    public static boolean isCompleteHttpHeader(byte[] data, int length) {
+        if (data == null || length < 4) return false;
+        String text = new String(data, 0, Math.min(length, 8192), StandardCharsets.ISO_8859_1);
+        return text.contains("\r\n\r\n") || text.contains("\n\n");
+    }
+
     public static boolean isTls(byte[] data, int length) {
         if (length < 3) return false;
-        // 0x16 = Handshake record, 0x03 = Major version TLS (3.0, 3.1/TLS 1.0, 3.3/TLS 1.2, etc.)
+        // 0x16 = TLS Handshake ClientHello, 0x03 = SSL 3.0 / TLS 1.x
         return (data[0] & 0xFF) == 0x16 && (data[1] & 0xFF) == 0x03;
     }
 
-    /**
-     * Kiểm tra SSH Client Banner
-     */
     public static boolean isSsh(byte[] data, int length) {
         if (length < 4) return false;
         String prefix = new String(data, 0, Math.min(length, 8), StandardCharsets.US_ASCII);
         return prefix.startsWith("SSH-");
     }
 
-    /**
-     * Kiểm tra Minecraft Java Handshake hoặc Legacy Ping
-     */
     public static boolean isMinecraft(byte[] data, int length) {
         if (length < 2) return false;
-
-        // Legacy Ping (MC 1.6 trở xuống): Bắt đầu bằng 0xFE 0x01
         if ((data[0] & 0xFF) == 0xFE) {
             return true;
         }
-
-        // Modern Minecraft Handshake:
-        // [Packet Length - VarInt] [Packet ID = 0x00 - VarInt] [Protocol Version - VarInt] ...
-        try {
-            int offset = 0;
-            // Đọc packet length
-            VarIntResult lenRes = readVarInt(data, offset, length);
-            if (lenRes == null || lenRes.value <= 0 || lenRes.value > 1024) return false;
-            offset = lenRes.newOffset;
-
-            // Đọc packet ID (phải là 0x00 cho Handshake)
-            VarIntResult idRes = readVarInt(data, offset, length);
-            if (idRes == null || idRes.value != 0x00) return false;
-            offset = idRes.newOffset;
-
-            // Đọc protocol version
-            VarIntResult protoRes = readVarInt(data, offset, length);
-            if (protoRes == null) return false;
-            offset = protoRes.newOffset;
-
-            // Đọc độ dài server address
-            VarIntResult addrLenRes = readVarInt(data, offset, length);
-            if (addrLenRes == null || addrLenRes.value < 0 || addrLenRes.value > 255) return false;
-
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
+        return inspectMinecraftHandshake(data, length) != null;
     }
 
     /**
-     * Trích xuất hostname từ gói Handshake Minecraft (nếu có)
+     * Phân tích đầy đủ gói Handshake Minecraft Java hiện đại.
+     * Kiểm tra cấu trúc chặt chẽ để tránh nhận nhầm dữ liệu ngẫu nhiên.
      */
-    public static String extractMinecraftHostname(byte[] data, int length) {
+    public static MinecraftHandshakeInfo inspectMinecraftHandshake(byte[] data, int length) {
         try {
             int offset = 0;
             VarIntResult lenRes = readVarInt(data, offset, length);
-            if (lenRes == null) return null;
+            if (lenRes == null || lenRes.value < 5 || lenRes.value > 1024) return null;
             offset = lenRes.newOffset;
+            int totalFirstPacketEnd = offset + lenRes.value;
 
             VarIntResult idRes = readVarInt(data, offset, length);
             if (idRes == null || idRes.value != 0x00) return null;
@@ -140,20 +122,95 @@ public class ProtocolSniffer {
             if (protoRes == null) return null;
             offset = protoRes.newOffset;
 
-            VarIntResult addrLen = readVarInt(data, offset, length);
-            if (addrLen == null || offset + addrLen.value > length) return null;
-            offset = addrLen.newOffset;
+            VarIntResult addrLenRes = readVarInt(data, offset, length);
+            if (addrLenRes == null || addrLenRes.value < 1 || addrLenRes.value > 255) return null;
+            offset = addrLenRes.newOffset;
 
-            String addr = new String(data, offset, addrLen.value, StandardCharsets.UTF_8);
-            return addr.split("\0")[0].toLowerCase(Locale.ROOT).trim();
+            String hostname = "";
+            if (offset + addrLenRes.value <= length) {
+                hostname = new String(data, offset, addrLenRes.value, StandardCharsets.UTF_8)
+                        .split("\0")[0].toLowerCase(Locale.ROOT).trim();
+                offset += addrLenRes.value;
+            } else {
+                return null;
+            }
+
+            // Đọc 2 byte port + 1 byte nextState nếu có đủ dữ liệu
+            int nextState = 0;
+            if (offset + 3 <= length) {
+                offset += 2; // port unsigned short
+                VarIntResult stateRes = readVarInt(data, offset, length);
+                if (stateRes == null || stateRes.value < 1 || stateRes.value > 3) {
+                    return null;
+                }
+                nextState = stateRes.value;
+            }
+
+            boolean hasExtra = length > totalFirstPacketEnd;
+            return new MinecraftHandshakeInfo(protoRes.value, hostname, nextState, hasExtra);
         } catch (Exception e) {
             return null;
         }
     }
 
+    // ==========================================
+    // XÁC MINH PHẢN HỒI TỪ BACKEND (OUTBOUND)
+    // ==========================================
+
     /**
-     * Trích xuất Header "Host:" từ HTTP Request
+     * Xác minh phản hồi của backend có phải giao thức Shell (SSH/SFTP/FTP/Telnet) hay không
      */
+    public static boolean isShellResponse(byte[] data, int length) {
+        if (data == null || length <= 0) return false;
+        if (length >= 4) {
+            String prefix = new String(data, 0, Math.min(length, 12), StandardCharsets.US_ASCII);
+            if (prefix.startsWith("SSH-") || prefix.startsWith("220 ") || prefix.startsWith("220-")) {
+                return true;
+            }
+        }
+        // Telnet IAC negotiation (0xFF followed by WILL/WONT/DO/DONT)
+        if (length >= 3 && (data[0] & 0xFF) == 0xFF) {
+            int cmd = data[1] & 0xFF;
+            return cmd >= 0xFB && cmd <= 0xFE;
+        }
+        return false;
+    }
+
+    /**
+     * Xác minh phản hồi của backend có phải HTTP Response hợp lệ hay không
+     */
+    public static boolean isHttpResponse(byte[] data, int length) {
+        if (data == null || length < 5) return false;
+        String prefix = new String(data, 0, Math.min(length, 32), StandardCharsets.US_ASCII);
+        if (prefix.startsWith("HTTP/") || prefix.startsWith("<!DOCTYPE")
+                || prefix.startsWith("<!doctype") || prefix.startsWith("<html")
+                || prefix.startsWith("<HTML")) {
+            return true;
+        }
+        // HTTP/2 SETTINGS frame (9+ bytes, type == 0x04)
+        return length >= 9 && (data[3] & 0xFF) == 0x04 && data[4] == 0x00;
+    }
+
+    /**
+     * Xác minh phản hồi của backend có phải TLS ServerHello / TLS Record hợp lệ hay không
+     */
+    public static boolean isTlsResponse(byte[] data, int length) {
+        if (data == null || length < 3) return false;
+        int recordType = data[0] & 0xFF;
+        int majorVer = data[1] & 0xFF;
+        // 0x16=Handshake, 0x15=Alert, 0x14=ChangeCipherSpec, Major=0x03
+        return majorVer == 0x03 && (recordType == 0x16 || recordType == 0x15 || recordType == 0x14);
+    }
+
+    // ==========================================
+    // TRÍCH XUẤT METADATA (HOSTNAME / PATH)
+    // ==========================================
+
+    public static String extractMinecraftHostname(byte[] data, int length) {
+        MinecraftHandshakeInfo info = inspectMinecraftHandshake(data, length);
+        return info != null ? info.hostname : null;
+    }
+
     public static String extractHttpHost(byte[] data, int length) {
         try {
             String text = new String(data, 0, Math.min(length, 2048), StandardCharsets.US_ASCII);
@@ -161,7 +218,6 @@ public class ProtocolSniffer {
             for (String line : lines) {
                 if (line.toLowerCase(Locale.ROOT).startsWith("host:")) {
                     String hostVal = line.substring(5).trim();
-                    // Bỏ cổng nếu có (vd: localhost:20002 -> localhost)
                     if (hostVal.contains(":")) {
                         hostVal = hostVal.substring(0, hostVal.indexOf(':'));
                     }
@@ -172,9 +228,6 @@ public class ProtocolSniffer {
         return null;
     }
 
-    /**
-     * Trích xuất URL Path từ HTTP Request (dòng đầu tiên: GET /path HTTP/1.1)
-     */
     public static String extractHttpPath(byte[] data, int length) {
         try {
             String text = new String(data, 0, Math.min(length, 1024), StandardCharsets.US_ASCII);
@@ -184,21 +237,16 @@ public class ProtocolSniffer {
                 String firstLine = text.substring(0, firstLineEnd);
                 String[] parts = firstLine.split(" ");
                 if (parts.length >= 2) {
-                    return parts[1]; // Request URI path
+                    return parts[1];
                 }
             }
         } catch (Exception ignored) {}
         return null;
     }
 
-    // ==========================================
-    // TIỆN ÍCH ĐỌC VARINT
-    // ==========================================
-
     private static VarIntResult readVarInt(byte[] data, int offset, int maxLen) {
         int value = 0;
         int bitOffset = 0;
-
         for (int i = 0; i < 5; i++) {
             if (offset + i >= maxLen) return null;
             int b = data[offset + i] & 0xFF;
