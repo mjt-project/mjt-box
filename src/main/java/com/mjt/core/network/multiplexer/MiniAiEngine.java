@@ -2,12 +2,12 @@ package com.mjt.core.network.multiplexer;
 
 import com.mjt.core.ui.OutputLogger;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.net.http.HttpRequest;
-import java.net.http.HttpResponse;
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.io.OutputStream;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -79,8 +79,6 @@ public class MiniAiEngine {
     // Cache phân loại cho chữ ký byte lạ (từ Offline / Online AI)
     private final ConcurrentHashMap<String, AiClassification> signatureCache = new ConcurrentHashMap<>();
 
-    private final HttpClient httpClient;
-
     private static final double MIN_SCORE_CLAMP = -5.0;
     private static final double MAX_SCORE_CLAMP = 10.0;
     private static final double DEMOTE_THRESHOLD = -1.5;
@@ -94,10 +92,6 @@ public class MiniAiEngine {
         this.onlineApiKey = onlineApiKey != null ? onlineApiKey.trim() : "";
         this.onlineModel = (onlineModel != null && !onlineModel.trim().isEmpty())
                 ? onlineModel.trim() : "gpt-4o-mini";
-
-        this.httpClient = HttpClient.newBuilder()
-                .connectTimeout(Duration.ofMillis(1500))
-                .build();
     }
 
     public void updateConfig(boolean enabled, boolean onlineEnabled,
@@ -363,6 +357,7 @@ public class MiniAiEngine {
     // ==========================================
 
     private AiClassification tryClassifyOnline(byte[] data) {
+        HttpURLConnection conn = null;
         try {
             StringBuilder hex = new StringBuilder();
             int sampleLen = Math.min(data.length, 32);
@@ -377,19 +372,31 @@ public class MiniAiEngine {
                     + "\",\"messages\":[{\"role\":\"user\",\"content\":\""
                     + escapeJson(prompt) + "\"}],\"max_tokens\":16,\"temperature\":0}";
 
-            HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
-                    .uri(URI.create(onlineApiUrl))
-                    .timeout(Duration.ofMillis(2000))
-                    .header("Content-Type", "application/json")
-                    .POST(HttpRequest.BodyPublishers.ofString(body, StandardCharsets.UTF_8));
-
+            conn = (HttpURLConnection) new URL(onlineApiUrl).openConnection();
+            conn.setRequestMethod("POST");
+            conn.setConnectTimeout(1500);
+            conn.setReadTimeout(2000);
+            conn.setDoOutput(true);
+            conn.setRequestProperty("Content-Type", "application/json");
             if (!onlineApiKey.isEmpty()) {
-                reqBuilder.header("Authorization", "Bearer " + onlineApiKey);
+                conn.setRequestProperty("Authorization", "Bearer " + onlineApiKey);
             }
 
-            HttpResponse<String> resp = httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
-            if (resp.statusCode() >= 200 && resp.statusCode() < 300) {
-                Matcher m = Pattern.compile("\"content\"\\s*:\\s*\"([^\"]+)\"").matcher(resp.body());
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(body.getBytes(StandardCharsets.UTF_8));
+            }
+
+            int status = conn.getResponseCode();
+            if (status >= 200 && status < 300) {
+                StringBuilder respBody = new StringBuilder();
+                try (BufferedReader br = new BufferedReader(
+                        new InputStreamReader(conn.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = br.readLine()) != null) {
+                        respBody.append(line);
+                    }
+                }
+                Matcher m = Pattern.compile("\"content\"\\s*:\\s*\"([^\"]+)\"").matcher(respBody.toString());
                 if (m.find()) {
                     String tag = m.group(1).trim().toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9_]", "");
                     if (!tag.isEmpty()) {
@@ -400,6 +407,8 @@ public class MiniAiEngine {
             }
         } catch (Exception e) {
             OutputLogger.warning("Online AI fallback không khả dụng (" + e.getMessage() + "), dùng Offline AI.");
+        } finally {
+            if (conn != null) conn.disconnect();
         }
         return null;
     }
