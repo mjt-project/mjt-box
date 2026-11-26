@@ -105,6 +105,14 @@ public class SmartMultiplexer {
         }
     }
 
+    /**
+     * Lưu cổng Web dự phòng tạm thời (trả 404 hoặc xử lý chậm) để thử Other trước khi rơi về 404
+     */
+    private static class WebFallbackCandidate {
+        int softNotFoundPort = -1;
+        int slowAlivePort = -1;
+    }
+
     public SmartMultiplexer(String name, int listenPort, String bindAddress,
                             List<Integer> webPorts, List<Integer> shellPorts,
                             List<Integer> otherPorts, int sshCheckTimeoutMs,
@@ -318,13 +326,19 @@ public class SmartMultiplexer {
             }
 
             // Tầng 2: HTTP / HTTPS (nếu Tầng 1 không xác nhận thành công)
+            WebFallbackCandidate webFallback = new WebFallbackCandidate();
             if (verified == null) {
-                verified = tryWebStage(sessionTag, initialData, clientHint);
+                verified = tryWebStage(sessionTag, initialData, clientHint, webFallback);
             }
 
             // Tầng 3: Nhóm Other (Round-Robin + Mini AI xác minh & học thích ứng)
             if (verified == null) {
                 verified = tryOtherStage(sessionTag, initialData, clientHint);
+            }
+
+            // Dự phòng Web (nếu Other cũng không có cổng nào nhận và Web từng trả 404 hoặc giữ luồng chậm)
+            if (verified == null) {
+                verified = resolveWebFallback(initialData, webFallback);
             }
 
             if (verified == null) {
@@ -433,7 +447,8 @@ public class SmartMultiplexer {
     // TẦNG 2: KIỂM TRA HTTP / HTTPS (XÁC NHẬN PHẢN HỒI WEB)
     // ==========================================
 
-    private VerifiedRoute tryWebStage(String sessionTag, byte[] initialData, ProtocolType clientHint) {
+    private VerifiedRoute tryWebStage(String sessionTag, byte[] initialData,
+                                      ProtocolType clientHint, WebFallbackCandidate fallback) {
         List<Integer> ports = this.webPorts;
         if (ports == null || ports.isEmpty()) {
             return null;
@@ -445,7 +460,7 @@ public class SmartMultiplexer {
             return null;
         }
 
-        int slowAliveHttpPort = -1;
+        boolean isMcpeJoin = ProtocolSniffer.isMcpeNetherNetRequest(initialData, initialData.length);
 
         for (int port : ports) {
             Socket backend = tryConnectTarget(port);
@@ -460,21 +475,37 @@ public class SmartMultiplexer {
 
                 ProbeReadResult reply = readBackendVerification(backend, webCheckTimeoutMs);
                 if (reply.data.length > 0) {
-                    boolean validWeb = (clientHint == ProtocolType.HTTPS_TLS)
-                            ? ProtocolSniffer.isTlsResponse(reply.data, reply.data.length)
-                            : ProtocolSniffer.isHttpResponse(reply.data, reply.data.length);
-
-                    if (validWeb) {
-                        String protoLabel = (clientHint == ProtocolType.HTTPS_TLS) ? "HTTPS/TLS" : "HTTP";
-                        return new VerifiedRoute(port, backend, reply.data,
-                                "Tầng 2: " + protoLabel + " xác nhận có dữ liệu", null);
+                    if (clientHint == ProtocolType.HTTPS_TLS) {
+                        if (ProtocolSniffer.isTlsResponse(reply.data, reply.data.length)) {
+                            return new VerifiedRoute(port, backend, reply.data,
+                                    "Tầng 2: HTTPS/TLS xác nhận có dữ liệu", null);
+                        }
+                        closeQuietly(backend);
+                        continue;
                     }
-                    // Backend trả lời nhưng không phải HTTP/TLS (vd trả nhầm SSH/rác) → thử cổng web tiếp
+
+                    // HTTP: CHỈ xác nhận thành công khi mã trạng thái là 1xx/2xx/3xx/401/403
+                    // Nếu 404/405/501 hoặc là HTML trả về cho yêu cầu MCPE (/v1/join) thì không xác nhận tại đây!
+                    if (ProtocolSniffer.isHttpConfirmedSuccess(reply.data, reply.data.length)) {
+                        if (isMcpeJoin && ProtocolSniffer.isHtmlHttpResponse(reply.data, reply.data.length)) {
+                            closeQuietly(backend);
+                            continue;
+                        }
+                        int code = ProtocolSniffer.parseHttpStatusCode(reply.data, reply.data.length);
+                        String codeTag = code > 0 ? " [" + code + "]" : "";
+                        return new VerifiedRoute(port, backend, reply.data,
+                                "Tầng 2: HTTP" + codeTag + " xác nhận có dữ liệu", null);
+                    }
+
+                    // Ghi nhớ cổng web sống nếu trả 404 để trả lỗi 404 cho trình duyệt nếu Other cũng không nhận
+                    if (ProtocolSniffer.isHttpSoftNotFound(reply.data, reply.data.length)
+                            && fallback.softNotFoundPort == -1) {
+                        fallback.softNotFoundPort = port;
+                    }
                     closeQuietly(backend);
-                } else if (!reply.eof && reply.timedOut && clientHint == ProtocolType.HTTP) {
-                    // API web xử lý chậm (>2.5s) nhưng socket vẫn mở sạch sẽ: ghi nhớ để không rơi nhầm sang Other
-                    if (slowAliveHttpPort == -1) {
-                        slowAliveHttpPort = port;
+                } else if (!reply.eof && reply.timedOut && clientHint == ProtocolType.HTTP && !isMcpeJoin) {
+                    if (fallback.slowAlivePort == -1) {
+                        fallback.slowAlivePort = port;
                     }
                     closeQuietly(backend);
                 } else {
@@ -485,22 +516,28 @@ public class SmartMultiplexer {
             }
         }
 
-        // Fallback an toàn cho API HTTP xử lý chậm quá 2.5s (chỉ khi client 100% là HTTP)
-        if (slowAliveHttpPort > 0) {
-            Socket backend = tryConnectTarget(slowAliveHttpPort);
-            if (backend != null) {
-                try {
-                    OutputStream out = backend.getOutputStream();
-                    out.write(initialData);
-                    out.flush();
-                    return new VerifiedRoute(slowAliveHttpPort, backend, new byte[0],
-                            "Tầng 2: HTTP (giữ kết nối xử lý chậm)", null);
-                } catch (IOException e) {
-                    closeQuietly(backend);
-                }
+        return null;
+    }
+
+    private VerifiedRoute resolveWebFallback(byte[] initialData, WebFallbackCandidate fallback) {
+        int port = fallback.slowAlivePort > 0 ? fallback.slowAlivePort : fallback.softNotFoundPort;
+        if (port <= 0) {
+            return null;
+        }
+        Socket backend = tryConnectTarget(port);
+        if (backend != null) {
+            try {
+                OutputStream out = backend.getOutputStream();
+                out.write(initialData);
+                out.flush();
+                String label = fallback.slowAlivePort > 0
+                        ? "Tầng 2: HTTP (giữ kết nối xử lý chậm)"
+                        : "Tầng 2: HTTP (404 từ Web server)";
+                return new VerifiedRoute(port, backend, new byte[0], label, null);
+            } catch (IOException e) {
+                closeQuietly(backend);
             }
         }
-
         return null;
     }
 
@@ -566,17 +603,21 @@ public class SmartMultiplexer {
 
                 // Backend không đóng socket nhưng im lặng trong lúc chờ xác minh
                 if (!reply.eof && reply.timedOut) {
-                    if (!aiClass.expectsImmediateReply) {
+                    if (!aiClass.expectsImmediateReply && miniAi.allowsSilentFallback(aiClass)) {
                         // Giao thức dạng stream thụ động: giữ nguyên socket luôn
                         String info = String.format(Locale.ROOT,
                                 "Tầng 3: Other [%s|%s %.0f%%] giữ luồng",
                                 aiClass.label, aiClass.source, aiClass.confidence * 100);
                         return new VerifiedRoute(port, backend, new byte[0], info, aiClass.label);
-                    } else {
+                    } else if (miniAi.allowsSilentFallback(aiClass)) {
                         // Giao thức cần phản hồi ngay (vd Minecraft Ping): ghi nhớ dự phòng, thử nốt các cổng còn lại
                         if (silentAliveFallbackPort == -1) {
                             silentAliveFallbackPort = port;
                         }
+                        closeQuietly(backend);
+                    } else {
+                        // HTTP/MCPE/TLS tuyệt đối không nhận cổng im lặng
+                        miniAi.recordVerificationFailure(aiClass.label, port);
                         closeQuietly(backend);
                     }
                 } else {

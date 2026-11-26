@@ -5,13 +5,14 @@ import java.util.Locale;
 
 /**
  * Bộ phân tích và nhận diện giao thức (Zero-Dependency Protocol Sniffer).
- * Hỗ trợ kiểm tra cả gói tin từ Client (Request/Handshake) và phản hồi từ Backend (Response/Banner).
+ * Hỗ trợ kiểm tra cả gói tin từ Client (Request/Handshake) và phản hồi từ
+ * Backend (Response/Banner).
  */
 public class ProtocolSniffer {
 
     // Danh sách các HTTP Methods tiêu chuẩn
     private static final String[] HTTP_METHODS = {
-        "GET ", "POST ", "HEAD ", "PUT ", "DELETE ", "OPTIONS ", "PATCH ", "CONNECT ", "TRACE "
+            "GET ", "POST ", "HEAD ", "PUT ", "DELETE ", "OPTIONS ", "PATCH ", "CONNECT ", "TRACE "
     };
 
     /**
@@ -23,7 +24,8 @@ public class ProtocolSniffer {
         public final int nextState;
         public final boolean hasExtraPacketBytes;
 
-        public MinecraftHandshakeInfo(int protocolVersion, String hostname, int nextState, boolean hasExtraPacketBytes) {
+        public MinecraftHandshakeInfo(int protocolVersion, String hostname, int nextState,
+                boolean hasExtraPacketBytes) {
             this.protocolVersion = protocolVersion;
             this.hostname = hostname;
             this.nextState = nextState;
@@ -63,7 +65,8 @@ public class ProtocolSniffer {
     // ==========================================
 
     public static boolean isHttp(byte[] data, int length) {
-        if (length < 4) return false;
+        if (length < 4)
+            return false;
         String prefix = new String(data, 0, Math.min(length, 16), StandardCharsets.US_ASCII);
         for (String method : HTTP_METHODS) {
             if (prefix.startsWith(method)) {
@@ -74,28 +77,33 @@ public class ProtocolSniffer {
     }
 
     /**
-     * Kiểm tra xem dữ liệu HTTP đã chứa dấu kết thúc header (\r\n\r\n hoặc \n\n) chưa
+     * Kiểm tra xem dữ liệu HTTP đã chứa dấu kết thúc header (\r\n\r\n hoặc \n\n)
+     * chưa
      */
     public static boolean isCompleteHttpHeader(byte[] data, int length) {
-        if (data == null || length < 4) return false;
+        if (data == null || length < 4)
+            return false;
         String text = new String(data, 0, Math.min(length, 8192), StandardCharsets.ISO_8859_1);
         return text.contains("\r\n\r\n") || text.contains("\n\n");
     }
 
     public static boolean isTls(byte[] data, int length) {
-        if (length < 3) return false;
+        if (length < 3)
+            return false;
         // 0x16 = TLS Handshake ClientHello, 0x03 = SSL 3.0 / TLS 1.x
         return (data[0] & 0xFF) == 0x16 && (data[1] & 0xFF) == 0x03;
     }
 
     public static boolean isSsh(byte[] data, int length) {
-        if (length < 4) return false;
+        if (length < 4)
+            return false;
         String prefix = new String(data, 0, Math.min(length, 8), StandardCharsets.US_ASCII);
         return prefix.startsWith("SSH-");
     }
 
     public static boolean isMinecraft(byte[] data, int length) {
-        if (length < 2) return false;
+        if (length < 2)
+            return false;
         if ((data[0] & 0xFF) == 0xFE) {
             return true;
         }
@@ -110,20 +118,24 @@ public class ProtocolSniffer {
         try {
             int offset = 0;
             VarIntResult lenRes = readVarInt(data, offset, length);
-            if (lenRes == null || lenRes.value < 5 || lenRes.value > 1024) return null;
+            if (lenRes == null || lenRes.value < 5 || lenRes.value > 1024)
+                return null;
             offset = lenRes.newOffset;
             int totalFirstPacketEnd = offset + lenRes.value;
 
             VarIntResult idRes = readVarInt(data, offset, length);
-            if (idRes == null || idRes.value != 0x00) return null;
+            if (idRes == null || idRes.value != 0x00)
+                return null;
             offset = idRes.newOffset;
 
             VarIntResult protoRes = readVarInt(data, offset, length);
-            if (protoRes == null) return null;
+            if (protoRes == null)
+                return null;
             offset = protoRes.newOffset;
 
             VarIntResult addrLenRes = readVarInt(data, offset, length);
-            if (addrLenRes == null || addrLenRes.value < 1 || addrLenRes.value > 255) return null;
+            if (addrLenRes == null || addrLenRes.value < 1 || addrLenRes.value > 255)
+                return null;
             offset = addrLenRes.newOffset;
 
             String hostname = "";
@@ -158,10 +170,12 @@ public class ProtocolSniffer {
     // ==========================================
 
     /**
-     * Xác minh phản hồi của backend có phải giao thức Shell (SSH/SFTP/FTP/Telnet) hay không
+     * Xác minh phản hồi của backend có phải giao thức Shell (SSH/SFTP/FTP/Telnet)
+     * hay không
      */
     public static boolean isShellResponse(byte[] data, int length) {
-        if (data == null || length <= 0) return false;
+        if (data == null || length <= 0)
+            return false;
         if (length >= 4) {
             String prefix = new String(data, 0, Math.min(length, 12), StandardCharsets.US_ASCII);
             if (prefix.startsWith("SSH-") || prefix.startsWith("220 ") || prefix.startsWith("220-")) {
@@ -177,10 +191,90 @@ public class ProtocolSniffer {
     }
 
     /**
-     * Xác minh phản hồi của backend có phải HTTP Response hợp lệ hay không
+     * Kiểm tra xem HTTP Request có phải tín hiệu NetherNet của Minecraft Bedrock
+     * (MCPE) không
+     */
+    public static boolean isMcpeNetherNetRequest(byte[] data, int length) {
+        if (!isHttp(data, length))
+            return false;
+        String path = extractHttpPath(data, length);
+        return path != null && path.toLowerCase(Locale.ROOT).startsWith("/v1/join");
+    }
+
+    /**
+     * Trích xuất mã trạng thái HTTP từ phản hồi backend (ví dụ "HTTP/1.1 200 OK" ->
+     * 200).
+     * Trả về -1 nếu không phải HTTP response hợp lệ.
+     */
+    public static int parseHttpStatusCode(byte[] data, int length) {
+        if (data == null || length < 12)
+            return -1;
+        String head = new String(data, 0, Math.min(length, 64), StandardCharsets.US_ASCII);
+        if (!head.startsWith("HTTP/"))
+            return -1;
+        int sp1 = head.indexOf(' ');
+        if (sp1 < 0 || sp1 + 4 > head.length())
+            return -1;
+        int end = sp1 + 4;
+        String codeStr = head.substring(sp1 + 1, end);
+        try {
+            return Integer.parseInt(codeStr);
+        } catch (NumberFormatException e) {
+            return -1;
+        }
+    }
+
+    /**
+     * Xác minh phản hồi HTTP là THÀNH CÔNG thực sự (1xx, 2xx, 3xx, 401, 403, HTML
+     * thô, HTTP/2).
+     * Các mã lỗi 400, 404, 405, 501, 502, 503 KHÔNG được coi là khớp chắc chắn ngay
+     * lập tức.
+     */
+    public static boolean isHttpConfirmedSuccess(byte[] data, int length) {
+        if (data == null || length < 5)
+            return false;
+        int status = parseHttpStatusCode(data, length);
+        if (status > 0) {
+            return (status >= 100 && status < 400) || status == 401 || status == 403;
+        }
+        String prefix = new String(data, 0, Math.min(length, 32), StandardCharsets.US_ASCII);
+        if (prefix.startsWith("<!DOCTYPE") || prefix.startsWith("<!doctype")
+                || prefix.startsWith("<html") || prefix.startsWith("<HTML")) {
+            return true;
+        }
+        return length >= 9 && (data[3] & 0xFF) == 0x04 && data[4] == 0x00;
+    }
+
+    /**
+     * Kiểm tra phản hồi HTTP có phải mã 404 / không hỗ trợ đường dẫn hay không
+     * (cổng web sống nhưng không có route này)
+     */
+    public static boolean isHttpSoftNotFound(byte[] data, int length) {
+        int status = parseHttpStatusCode(data, length);
+        return status == 404 || status == 405 || status == 410 || status == 501;
+    }
+
+    /**
+     * Kiểm tra xem phản hồi HTTP có chứa trang HTML hay không (dùng để tránh SPA
+     * catch-all nuốt nhầm /v1/join)
+     */
+    public static boolean isHtmlHttpResponse(byte[] data, int length) {
+        if (data == null || length < 5)
+            return false;
+        String sample = new String(data, 0, Math.min(length, 512), StandardCharsets.ISO_8859_1)
+                .toLowerCase(Locale.ROOT);
+        return sample.contains("content-type: text/html")
+                || sample.contains("<!doctype html")
+                || sample.contains("<html");
+    }
+
+    /**
+     * Xác minh phản hồi của backend có phải HTTP Response (bất kỳ mã trạng thái)
+     * hay không
      */
     public static boolean isHttpResponse(byte[] data, int length) {
-        if (data == null || length < 5) return false;
+        if (data == null || length < 5)
+            return false;
         String prefix = new String(data, 0, Math.min(length, 32), StandardCharsets.US_ASCII);
         if (prefix.startsWith("HTTP/") || prefix.startsWith("<!DOCTYPE")
                 || prefix.startsWith("<!doctype") || prefix.startsWith("<html")
@@ -192,10 +286,12 @@ public class ProtocolSniffer {
     }
 
     /**
-     * Xác minh phản hồi của backend có phải TLS ServerHello / TLS Record hợp lệ hay không
+     * Xác minh phản hồi của backend có phải TLS ServerHello / TLS Record hợp lệ hay
+     * không
      */
     public static boolean isTlsResponse(byte[] data, int length) {
-        if (data == null || length < 3) return false;
+        if (data == null || length < 3)
+            return false;
         int recordType = data[0] & 0xFF;
         int majorVer = data[1] & 0xFF;
         // 0x16=Handshake, 0x15=Alert, 0x14=ChangeCipherSpec, Major=0x03
@@ -224,7 +320,8 @@ public class ProtocolSniffer {
                     return hostVal.toLowerCase(Locale.ROOT).trim();
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
         return null;
     }
 
@@ -232,7 +329,8 @@ public class ProtocolSniffer {
         try {
             String text = new String(data, 0, Math.min(length, 1024), StandardCharsets.US_ASCII);
             int firstLineEnd = text.indexOf("\r\n");
-            if (firstLineEnd == -1) firstLineEnd = text.indexOf('\n');
+            if (firstLineEnd == -1)
+                firstLineEnd = text.indexOf('\n');
             if (firstLineEnd > 0) {
                 String firstLine = text.substring(0, firstLineEnd);
                 String[] parts = firstLine.split(" ");
@@ -240,7 +338,8 @@ public class ProtocolSniffer {
                     return parts[1];
                 }
             }
-        } catch (Exception ignored) {}
+        } catch (Exception ignored) {
+        }
         return null;
     }
 
@@ -248,7 +347,8 @@ public class ProtocolSniffer {
         int value = 0;
         int bitOffset = 0;
         for (int i = 0; i < 5; i++) {
-            if (offset + i >= maxLen) return null;
+            if (offset + i >= maxLen)
+                return null;
             int b = data[offset + i] & 0xFF;
             value |= (b & 0x7F) << bitOffset;
             if ((b & 0x80) == 0) {

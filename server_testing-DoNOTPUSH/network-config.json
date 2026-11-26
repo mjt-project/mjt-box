@@ -11,7 +11,7 @@
 
     "web_ports": [8080, 8081],
     "shell_ports": [2222],
-    "other_ports": [25566, 25567]
+    "other_ports": [25566, 25567, 19132]
   },
 
   "ai_assistant": {

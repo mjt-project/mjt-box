@@ -150,6 +150,22 @@ public class MiniAiEngine {
         double entropy = computeShannonEntropy(data);
         double asciiRatio = computeAsciiRatio(data);
 
+        // Kiểm tra tín hiệu NetherNet HTTP của Minecraft Bedrock (MCPE: GET/POST /v1/join)
+        if (ProtocolSniffer.isMcpeNetherNetRequest(data, len)) {
+            return new AiClassification("MCPE_NETHERNET", 0.97, true,
+                    "OFFLINE_AI", "MCPE Bedrock NetherNet Signaling (/v1/join)");
+        }
+
+        // Kiểm tra HTTP API hoặc TLS đi qua Other (do Web từ chối/404 hoặc TLS dịch vụ trong Other)
+        if (ProtocolSniffer.isHttp(data, len)) {
+            return new AiClassification("HTTP_SIGNALING", 0.90, true,
+                    "OFFLINE_AI", "HTTP Service/Signaling (" + ProtocolSniffer.extractHttpPath(data, len) + ")");
+        }
+        if (ProtocolSniffer.isTls(data, len)) {
+            return new AiClassification("TLS_SERVICE", 0.90, true,
+                    "OFFLINE_AI", "TLS Encrypted Service");
+        }
+
         // Kiểm tra Minecraft Java (Modern VarInt + Legacy Ping)
         ProtocolSniffer.MinecraftHandshakeInfo mcInfo = ProtocolSniffer.inspectMinecraftHandshake(data, len);
         if (mcInfo != null) {
@@ -232,25 +248,55 @@ public class MiniAiEngine {
 
     /**
      * Phân tích dữ liệu backend gửi lại trong nhóm Other để phát hiện xem có bị nối nhầm
-     * sang dịch vụ SSH/HTTP hay không, hoặc đã nhận đúng phản hồi.
+     * dịch vụ hay không, hoặc đã nhận đúng phản hồi hợp lệ.
      */
     public BackendVerdict verifyBackendResponse(AiClassification clientClass, byte[] response, int len) {
         if (response == null || len <= 0) {
             return BackendVerdict.PASSIVE_SILENT;
         }
 
-        // Bắt lỗi nối nhầm nghiêm trọng: Dịch vụ ở Other lại trả lời bằng SSH hoặc HTTP!
+        // Bắt lỗi trả nhầm banner SSH trong nhóm Other
         if (ProtocolSniffer.isShellResponse(response, len)) {
             return BackendVerdict.MISMATCH_REJECT;
         }
-        if (ProtocolSniffer.isHttpResponse(response, len)) {
-            // Ngoại lệ: nếu client thực chất là HTTP không nhận diện được trước đó thì vẫn nhận
-            if (!"PLAINTEXT_CUSTOM".equals(clientClass.label)) {
+
+        // Nếu client trong Other thực chất đang gửi tín hiệu HTTP (vd MCPE /v1/join)
+        if ("MCPE_NETHERNET".equals(clientClass.label) || "HTTP_SIGNALING".equals(clientClass.label)) {
+            if (!ProtocolSniffer.isHttpConfirmedSuccess(response, len)) {
+                // Từ chối 400 / 404 / 5xx hoặc dữ liệu không phải HTTP
                 return BackendVerdict.MISMATCH_REJECT;
             }
+            if ("MCPE_NETHERNET".equals(clientClass.label) && ProtocolSniffer.isHtmlHttpResponse(response, len)) {
+                // Trang HTML không phải phản hồi JSON của MCPE NetherNet
+                return BackendVerdict.MISMATCH_REJECT;
+            }
+            return BackendVerdict.CONFIRMED;
+        }
+
+        // Nếu client trong Other gửi TLS ClientHello (HTTPS/TLS)
+        if ("TLS_SERVICE".equals(clientClass.label)) {
+            return ProtocolSniffer.isTlsResponse(response, len)
+                    ? BackendVerdict.CONFIRMED
+                    : BackendVerdict.MISMATCH_REJECT;
+        }
+
+        // Với các giao thức không phải HTTP (Minecraft Java, nhị phân...), phản hồi HTTP là nối nhầm!
+        if (ProtocolSniffer.isHttpResponse(response, len)) {
+            return BackendVerdict.MISMATCH_REJECT;
         }
 
         return BackendVerdict.CONFIRMED;
+    }
+
+    /**
+     * Kiểm tra xem loại giao thức có được phép giữ kết nối im lặng (không phản hồi tức thì) hay không.
+     * HTTP/MCPE/TLS BẮT BUỘC phải có phản hồi xác nhận, tuyệt đối không giữ kết nối im lặng.
+     */
+    public boolean allowsSilentFallback(AiClassification clientClass) {
+        if (clientClass == null) return false;
+        return !"MCPE_NETHERNET".equals(clientClass.label)
+                && !"HTTP_SIGNALING".equals(clientClass.label)
+                && !"TLS_SERVICE".equals(clientClass.label);
     }
 
     // ==========================================
