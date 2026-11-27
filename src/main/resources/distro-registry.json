@@ -19,7 +19,7 @@
       }
     },
     {
-    "id": "debian-bullseye",
+      "id": "debian-bullseye",
       "display_name": "Debian 11 (Bullseye - from EXALAB / Anlinux Resources)",
       "shell_path": "/bin/bash",
       "urls": {

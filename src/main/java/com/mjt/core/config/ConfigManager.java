@@ -18,7 +18,7 @@ public class ConfigManager {
      * Nạp cấu hình từ bên ngoài. Nếu file chưa tồn tại, tự động tạo mới.
      */
     public static void loadConfig() {
-        File configFile = new File(CONFIG_FILE);
+        File configFile = MjtPaths.resolve(CONFIG_FILE);
 
         if (!configFile.exists()) {
             OutputLogger.warning("Không tìm thấy tệp cấu hình ngoại vi. Đang khởi tạo " + CONFIG_FILE + "...");
@@ -45,7 +45,7 @@ public class ConfigManager {
                 
                 "# 1. Tự động khởi động (Auto-boot)\n" +
                 "# Nếu điền ID hệ điều hành vào đây, hệ thống sẽ bỏ qua menu chọn.\n" +
-                "# Ví dụ: ubuntu-22.04 hoặc alpine-latest (Để trống nếu muốn tự chọn)\n" +
+                "# Ví dụ: ubuntu-22.04, alpine-3.24 hoặc debian-bullseye (Để trống nếu muốn tự chọn)\n" +
                 "auto-boot-os=\n\n" +
                 
                 "# 2. Vô hiệu hóa Bảng hỏi Cấu hình (Debian/Ubuntu)\n" +

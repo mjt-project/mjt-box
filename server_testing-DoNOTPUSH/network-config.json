@@ -1,0 +1,94 @@
+{
+  "enabled": true,
+  "bind_address": "0.0.0.0",
+  "auto_reload": true,
+
+  "smart_multiplexer": {
+    "enabled": true,
+    "listen_port": 25565,
+    "public_host": "auto",
+    "public_port": "auto",
+    "ssh_check_timeout_ms": 2000,
+    "web_check_timeout_ms": 2500
+  },
+
+  "service": {
+    "ssh": {
+      "enabled": true,
+      "ip": "127.0.0.1",
+      "listen_port": 22
+    },
+    "sftp": {
+      "enabled": true,
+      "ip": "127.0.0.1",
+      "listen_port": 22
+    },
+    "ftp": {
+      "enabled": false,
+      "ip": "127.0.0.1",
+      "listen_port": 21
+    }
+  },
+
+  "ai_assistant": {
+    "enabled": true,
+    "online_enabled": false,
+    "online_api_url": "",
+    "online_api_key": "",
+    "online_model": "gpt-4o-mini"
+  },
+
+  "tcp": {
+    "web_port": {
+      "web_home": {
+        "enabled": true,
+        "web_main": true,
+        "group": "Example_1",
+        "group_member": "auto",
+        "type": "tcp",
+        "ip": "127.0.0.1",
+        "listen_port": 8080,
+        "path": "/"
+      },
+      "web_about": {
+        "enabled": true,
+        "web_main": false,
+        "group": "Example_1",
+        "type": "tcp",
+        "listen_port": "auto",
+        "path": "/about"
+      },
+      "web_alt": {
+        "enabled": true,
+        "web_main": false,
+        "group": "Example_1",
+        "type": "tcp",
+        "ip": "127.0.0.1",
+        "listen_port": 8081,
+        "path": "/"
+      }
+    },
+    "minecraft_pc": {
+      "enabled": true,
+      "type": "tcp",
+      "ip": "127.0.0.1",
+      "listen_port": 25566
+    },
+    "minecraft_pe": {
+      "enabled": true,
+      "type": "tcp",
+      "ip": "127.0.0.1",
+      "listen_port": 19132
+    }
+  },
+
+  "udp": {
+    "web_port": {},
+    "minecraft_pe": {
+      "enabled": true,
+      "type": "udp",
+      "ip": "127.0.0.1",
+      "listen_port": 19132
+    }
+  }
+}

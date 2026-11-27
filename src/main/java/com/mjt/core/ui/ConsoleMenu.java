@@ -2,7 +2,6 @@ package com.mjt.core.ui;
 
 import com.mjt.core.registry.DistroManager;
 import com.mjt.core.registry.DistroManifest;
-import com.mjt.core.ui.ConsoleColors;
 
 import java.util.List;
 import java.util.Scanner;
