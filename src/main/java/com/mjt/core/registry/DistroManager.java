@@ -94,6 +94,6 @@ public class DistroManager {
         } catch (Exception e) {
             // Nuốt lỗi nếu không đọc được file
         }
-        return "1.1.0"; // mjt-core version
+        return "0.1.0"; // mjt-core fallback version
     }
 }
