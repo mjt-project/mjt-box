@@ -1,12 +1,18 @@
 package com.mjt.core;
 
+import java.io.BufferedReader;
 import java.io.File;
+import java.io.IOException;
+import java.io.InputStream;
+import java.io.InputStreamReader;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Paths;
 import java.util.Arrays;
 
 import com.mjt.core.config.ConfigManager;
 import com.mjt.core.config.MjtPaths;
+import com.mjt.core.config.StartupScriptManager;
 import com.mjt.core.engine.ProotOrchestrator;
 import com.mjt.core.network.NetworkConfig;
 import com.mjt.core.network.VirtualNetworkManager;
@@ -31,6 +37,8 @@ public class ServerMain {
         System.out.println("   Phiên bản hiện tại của MJT Proot: " + DistroManager.getMjtCoreVersion());
         System.out.println("\n==================================================");
         ConfigManager.loadConfig();
+        File startupFile = StartupScriptManager.ensureStartupFile();
+        System.out.println("[*] Tệp lệnh khởi động: " + startupFile.getPath());
 
         // Xử lý tham số khởi động (Argument Parsing)
         boolean isNoGui = Arrays.asList(args).contains("nogui");
@@ -53,20 +61,73 @@ public class ServerMain {
             networkManager.start();
 
             // ==========================================
-            // CHUYỂN GIAO QUYỀN LỰC CHO TẦNG ENGINE
+            // CHUYỂN GIAO QUYỀN LỰC CHO TẦNG ENGINE (+ XÁC NHẬN RESTART)
             // ==========================================
-            System.out.println("[+] Đang đoạt quyền luồng I/O trực tiếp...\n");
             ProotOrchestrator engine = new ProotOrchestrator();
-            engine.bootEnvironment(targetRootfs, targetShell);
+            boolean keepRunning = true;
+            while (keepRunning) {
+                System.out.println("[+] Đang đoạt quyền luồng I/O trực tiếp...\n");
+                engine.bootEnvironment(targetRootfs, targetShell);
+
+                boolean requestedByCmd = StartupScriptManager.consumeRestartMarker();
+                if (requestedByCmd) {
+                    OutputLogger.info("Nhận được yêu cầu chạy lại '" + StartupScriptManager.STARTUP_FILE
+                            + "' từ lệnh 'mjt-restart'.");
+                } else {
+                    OutputLogger.info("Phiên làm việc PRoot vừa kết thúc.");
+                }
+
+                if (askRestartConfirmation(System.in, System.out)) {
+                    OutputLogger.info("Đã xác nhận! Đang nạp lại cấu hình và khởi động lại PRoot...");
+                    ConfigManager.loadConfig();
+                    StartupScriptManager.normalizeAndRead();
+                } else {
+                    keepRunning = false;
+                }
+            }
 
             // ==========================================
-            // DỌN DẸP: Dừng mạng ảo khi PRoot thoát
+            // DỌN DẸP: Dừng mạng ảo khi người dùng chọn thoát
             // ==========================================
             networkManager.stop();
 
         } catch (Exception e) {
             System.err.println("\n[MJT-Fatal] Lỗi hệ thống nghiêm trọng: " + e.getMessage());
             e.printStackTrace();
+        }
+    }
+
+    /**
+     * Hỏi xác nhận Có/Không trước khi khởi động lại PRoot và chạy lại
+     * startup-commands.sh.
+     * Không đóng luồng đầu vào để bảo vệ System.in.
+     */
+    public static boolean askRestartConfirmation(InputStream in, PrintStream out) {
+        out.println("\n==================================================");
+        out.println("[?] Bạn có muốn khởi động lại PRoot để chạy lại '"
+                + StartupScriptManager.STARTUP_FILE + "' không?");
+        out.print("    Nhập 'y' / 'co' (Có) hoặc 'n' / 'khong' (Không) [y/N]: ");
+        out.flush();
+
+        BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
+        try {
+            while (true) {
+                String line = reader.readLine();
+                if (line == null) {
+                    return false;
+                }
+                String trimmed = line.trim();
+                if (trimmed.isEmpty() || StartupScriptManager.isNegative(trimmed)) {
+                    return false;
+                }
+                if (StartupScriptManager.isAffirmative(trimmed)) {
+                    return true;
+                }
+                out.print("[-] Lựa chọn không hợp lệ. Vui lòng nhập 'y' (Có) hoặc 'n' (Không) [y/N]: ");
+                out.flush();
+            }
+        } catch (IOException e) {
+            return false;
         }
     }
 
@@ -112,7 +173,8 @@ public class ServerMain {
             } else if (allowInteractiveMenu) {
                 distroId = ConsoleMenu.showAndSelect();
             } else {
-                distroId = (fallbackDistroId != null && !fallbackDistroId.isEmpty()) ? fallbackDistroId : "alpine-latest";
+                distroId = (fallbackDistroId != null && !fallbackDistroId.isEmpty())
+                        ? fallbackDistroId : DistroManager.getDefaultDistroId();
                 OutputLogger.warning("Chế độ không tương tác (Plugin): sử dụng distro mặc định '" + distroId
                         + "' (có thể đổi bằng auto-boot-os trong mjt.conf).");
             }
@@ -124,7 +186,7 @@ public class ServerMain {
             Files.writeString(profile.toPath(), targetRootfs + "|" + targetShell);
             OutputLogger.success("Đã lưu cấu hình vòng đời mới vào " + profile.getPath());
         }
-
+        
         return new String[] { targetRootfs, targetShell };
     }
 }

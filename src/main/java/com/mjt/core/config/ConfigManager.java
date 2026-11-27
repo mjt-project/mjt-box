@@ -45,7 +45,7 @@ public class ConfigManager {
                 
                 "# 1. Tự động khởi động (Auto-boot)\n" +
                 "# Nếu điền ID hệ điều hành vào đây, hệ thống sẽ bỏ qua menu chọn.\n" +
-                "# Ví dụ: ubuntu-22.04 hoặc alpine-latest (Để trống nếu muốn tự chọn)\n" +
+                "# Ví dụ: ubuntu-22.04, alpine-3.24 hoặc debian-bullseye (Để trống nếu muốn tự chọn)\n" +
                 "auto-boot-os=\n\n" +
                 
                 "# 2. Vô hiệu hóa Bảng hỏi Cấu hình (Debian/Ubuntu)\n" +

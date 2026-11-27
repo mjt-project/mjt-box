@@ -6,15 +6,19 @@ import com.mjt.core.registry.DistroManifest;
 import com.mjt.core.config.MjtPaths;
 import com.mjt.core.ui.OutputLogger;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.time.Duration;
 import java.util.List;
+import java.util.Locale;
 
 public class DistroProvisioner {
 
@@ -25,9 +29,6 @@ public class DistroProvisioner {
     public static String[] install(String distroId) throws Exception {
         // 1. Đối chiếu ID để lấy khuôn mẫu (Manifest)
         DistroManifest manifest = getManifestById(distroId);
-        if (manifest == null) {
-            throw new RuntimeException("Lỗi cấu trúc: Không tìm thấy dữ liệu cho ID " + distroId);
-        }
 
         OutputLogger.info("Bắt đầu tiến trình cấp phát tài nguyên cho: " + manifest.getDisplayName());
 
@@ -44,7 +45,7 @@ public class DistroProvisioner {
         }
 
         // 3. Chuẩn bị Hệ thống tệp gốc (Rootfs)
-        String targetDirName = distroId + "-fs";
+        String targetDirName = manifest.getId() + "-fs";
         File rootfsDir = MjtPaths.resolve(targetDirName);
         
         if (!rootfsDir.exists()) {
@@ -60,16 +61,29 @@ public class DistroProvisioner {
 
             // Giải nén bằng công cụ tar của Container
             OutputLogger.info("Đang bung nén không gian bộ nhớ (Quá trình này có thể mất vài phút)...");
-            rootfsDir.mkdir();
+            rootfsDir.mkdirs();
             
             // Lệnh tar tự động nhận diện cả .tar.gz và .tar.xz
             Process tarProcess = new ProcessBuilder("tar", "-xf", fileName, "-C", targetDirName)
                     .directory(MjtPaths.getBaseDir())
+                    .redirectErrorStream(true)
                     .start();
+            StringBuilder tarOutput = new StringBuilder();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(tarProcess.getInputStream(), StandardCharsets.UTF_8))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    if (tarOutput.length() < 1024) {
+                        tarOutput.append(line).append('\n');
+                    }
+                }
+            }
             int exitCode = tarProcess.waitFor();
             
             if (exitCode != 0) {
-                throw new RuntimeException("Lỗi bung nén Rootfs! Mã thoát: " + exitCode);
+                String detail = tarOutput.toString().trim();
+                throw new RuntimeException("Lỗi bung nén Rootfs! Mã thoát: " + exitCode
+                        + (detail.isEmpty() ? "" : " | " + detail));
             }
             OutputLogger.success("Khởi tạo không gian hệ điều hành thành công.");
             
@@ -84,14 +98,49 @@ public class DistroProvisioner {
     // CÁC HÀM HỖ TRỢ (HELPER METHODS)
     // ==========================================
 
-    private static DistroManifest getManifestById(String id) throws Exception {
+    public static DistroManifest getManifestById(String id) throws Exception {
         List<DistroManifest> distros = DistroManager.getAvailableDistros();
+        String query = (id == null) ? "" : id.trim();
+        if (query.isEmpty()) {
+            query = DistroManager.getDefaultDistroId();
+        }
+
+        // 1. Khớp chính xác theo ID (không phân biệt hoa/thường)
         for (DistroManifest d : distros) {
-            if (d.getId().equals(id)) {
+            if (d.getId().equalsIgnoreCase(query)) {
                 return d;
             }
         }
-        return null;
+
+        // 2. Khớp alias thân thiện (alpine / alpine-latest / ubuntu / debian)
+        String lower = query.toLowerCase(Locale.ROOT);
+        String familyPrefix = null;
+        if ("alpine".equals(lower) || "alpine-latest".equals(lower)) {
+            familyPrefix = "alpine";
+        } else if ("ubuntu".equals(lower) || "ubuntu-latest".equals(lower)) {
+            familyPrefix = "ubuntu";
+        } else if ("debian".equals(lower) || "debian-latest".equals(lower)) {
+            familyPrefix = "debian";
+        } else {
+            familyPrefix = lower;
+        }
+
+        for (DistroManifest d : distros) {
+            if (d.getId().toLowerCase(Locale.ROOT).startsWith(familyPrefix)) {
+                if (!d.getId().equalsIgnoreCase(query)) {
+                    OutputLogger.info("Ánh xạ bí danh '" + query + "' → '" + d.getId() + "'.");
+                }
+                return d;
+            }
+        }
+
+        StringBuilder validIds = new StringBuilder();
+        for (DistroManifest d : distros) {
+            if (validIds.length() > 0) validIds.append(", ");
+            validIds.append(d.getId());
+        }
+        throw new RuntimeException("Lỗi cấu trúc: Không tìm thấy dữ liệu cho ID '" + query
+                + "'. Các ID hợp lệ: [" + validIds + "]");
     }
 
     private static void downloadFile(String url, Path target, String taskName) throws Exception {

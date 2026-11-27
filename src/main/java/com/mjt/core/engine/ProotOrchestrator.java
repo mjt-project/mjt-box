@@ -7,6 +7,7 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.io.OutputStreamWriter;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -17,6 +18,7 @@ import java.util.function.Consumer;
 
 import com.mjt.core.config.ConfigManager;
 import com.mjt.core.config.MjtPaths;
+import com.mjt.core.config.StartupScriptManager;
 import com.mjt.core.ui.OutputLogger;
 
 public class ProotOrchestrator {
@@ -118,18 +120,37 @@ public class ProotOrchestrator {
             command.add("/etc/resolv.conf:/etc/resolv.conf");
         }
 
-        // 4. [CHỐT HẠ]: Nạp đường dẫn Shell
+        // 4. [CHỐT HẠ]: Nạp đường dẫn Shell + Startup Commands (vẫn giữ phiên shell hoạt động)
+        StartupScriptManager.clearRestartMarker();
+        installRestartCommand(resolvedRootfs);
+        boolean hasStartupScript = StartupScriptManager.hasExecutableCommands();
+
         command.add(shellPath);
 
         // ==========================================
-        // [TÍNH NĂNG MỚI]: ENTRYPOINT (TỰ ĐỘNG THỰC THI LỆNH)
+        // [TÍNH NĂNG MỚI]: STARTUP COMMANDS & ENTRYPOINT
         // ==========================================
         String startupCmd = ConfigManager.get("startup-command", "");
-
-        if (!startupCmd.isEmpty()) {
-            OutputLogger.info("Kích hoạt lệnh khởi động tự động (Entrypoint): " + startupCmd);
-            command.add("-c");         // Báo cho Bash biết: "Đừng mở màn hình chờ, chạy lệnh sau đây rồi thoát!"
-            command.add(startupCmd);   // Bơm lệnh vào
+        if (hasStartupScript || !startupCmd.isEmpty()) {
+            StringBuilder script = new StringBuilder();
+            if (hasStartupScript) {
+                OutputLogger.info("Đang chạy tệp lệnh khởi động: " + StartupScriptManager.STARTUP_FILE
+                        + " (" + StartupScriptManager.countExecutableLines() + " dòng lệnh)");
+                script.append("[ -f /workspace/").append(StartupScriptManager.STARTUP_FILE)
+                        .append(" ] && ").append(shellPath).append(" /workspace/")
+                        .append(StartupScriptManager.STARTUP_FILE).append("; ");
+            }
+            if (!startupCmd.isEmpty()) {
+                OutputLogger.info("Kích hoạt lệnh khởi động tự động (Entrypoint): " + startupCmd);
+                script.append(startupCmd);
+                if (hasStartupScript) {
+                    script.append("; exec ").append(shellPath);
+                }
+            } else {
+                script.append("exec ").append(shellPath);
+            }
+            command.add("-c");
+            command.add(script.toString());
         }
 
         // Khởi tạo Process Builder...
@@ -144,6 +165,8 @@ public class ProotOrchestrator {
         pb.environment().put("LC_ALL", "C.UTF-8");
         pb.environment().put("LANG", "C.UTF-8");
         pb.environment().put("TERM", "xterm-256color");
+        pb.environment().put("PATH", "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin");
+        pb.environment().put("MJT_MODE", interactive ? "standalone" : "plugin");
         pb.environment().put("PROOT_NO_SECCOMP", "1");
 
         if (rootfsDir.contains("alpine")) {
@@ -290,6 +313,31 @@ public class ProotOrchestrator {
             } catch (IllegalStateException ignored) {
             }
             this.shutdownHook = null;
+        }
+    }
+
+    private void installRestartCommand(File resolvedRootfs) {
+        if (resolvedRootfs == null || !resolvedRootfs.exists()) {
+            return;
+        }
+        try {
+            File binDir = new File(resolvedRootfs, "usr/local/bin");
+            if (!binDir.exists()) {
+                binDir.mkdirs();
+            }
+            File restartBin = new File(binDir, "mjt-restart");
+            String script = "#!/bin/sh\n"
+                    + "touch /workspace/" + StartupScriptManager.RESTART_MARKER_FILE + "\n"
+                    + "if [ \"$MJT_MODE\" = \"plugin\" ]; then\n"
+                    + "    echo \"[MJT-RESTART-PENDING] Da ghi nhan yeu cau khoi dong lai. Dung /mjt confirm (Co) hoac /mjt cancel (Khong).\"\n"
+                    + "    exit 0\n"
+                    + "fi\n"
+                    + "echo \"[MJT] Da ghi nhan yeu cau khoi dong lai. Chuyen sang hop thoai xac nhan...\"\n"
+                    + "kill -TERM \"$PPID\" 2>/dev/null || true\n"
+                    + "exit 0\n";
+            Files.writeString(restartBin.toPath(), script, StandardCharsets.UTF_8);
+            restartBin.setExecutable(true, false);
+        } catch (IOException ignored) {
         }
     }
 }

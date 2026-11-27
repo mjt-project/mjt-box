@@ -9,7 +9,7 @@ description: Managed Java Terminal - Virtual Network Manager & Rootless Linux Or
 commands:
   mjt:
     description: Quan ly MJT Core (mang ao va Linux PRoot) trong Paper
-    usage: /mjt <status|reload|setup|boot|exec|log|stop-os>
+    usage: /mjt <status|reload|setup|boot|restart|confirm|cancel|exec|log|stop-os>
     permission: mjt.admin
 permissions:
   mjt.admin:

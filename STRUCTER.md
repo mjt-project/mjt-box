@@ -31,7 +31,8 @@ mjt-core/
                 │
                 ├── config/                  # TẦNG 3: QUẢN LÝ CẤU HÌNH
                 │   ├── ConfigManager.java   # Đọc/ghi tệp cấu hình mjt.conf
-                │   └── MjtPaths.java        # Chuẩn hóa thư mục gốc (./ hoặc plugins/MJTCore)
+                │   ├── MjtPaths.java        # Chuẩn hóa thư mục gốc (./ hoặc plugins/MJTCore)
+                │   └── StartupScriptManager.java # Tệp lệnh khởi động startup-commands.sh & xác nhận restart
                 │
                 ├── registry/               # TẦNG 4: QUẢN LÝ BẢN PHÂN PHỐI
                 │   ├── DistroManager.java   # Đọc file JSON, lọc HĐH theo CPU

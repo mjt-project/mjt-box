@@ -63,6 +63,25 @@ public class DistroManager {
     }
 
     /**
+     * Trả về ID bản phân phối mặc định từ distro-registry.json (ưu tiên Alpine gọn nhẹ).
+     */
+    public static String getDefaultDistroId() {
+        try {
+            List<DistroManifest> distros = getAvailableDistros();
+            for (DistroManifest d : distros) {
+                if (d.getId().toLowerCase().startsWith("alpine")) {
+                    return d.getId();
+                }
+            }
+            if (!distros.isEmpty()) {
+                return distros.get(0).getId();
+            }
+        } catch (Exception ignored) {
+        }
+        return "alpine-3.24";
+    }
+
+    /**
      * Truy xuất phiên bản động từ cấu hình Maven (pom.xml)
      */
     public static String getMjtCoreVersion() {
