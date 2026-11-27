@@ -132,10 +132,12 @@ public class ServerMain {
     }
 
     /**
-     * Đảm bảo PRoot + Rootfs đã được cài đặt và đồng bộ hóa với .mjt-profile trong MjtPaths.
+     * Đảm bảo PRoot + Rootfs đã được cài đặt và đồng bộ hóa với .mjt-profile trong
+     * MjtPaths.
      * Dùng chung cho cả chế độ Standalone và chế độ Plugin (Paper).
      */
-    public static String[] ensureEnvironmentProvisioned(boolean allowInteractiveMenu, String fallbackDistroId) throws Exception {
+    public static String[] ensureEnvironmentProvisioned(boolean allowInteractiveMenu, String fallbackDistroId)
+            throws Exception {
         File profile = MjtPaths.resolve(PROFILE_FILE);
         String targetRootfs = null;
         String targetShell = null;
@@ -151,11 +153,12 @@ public class ServerMain {
             File rootfsDir = MjtPaths.resolve(targetRootfs);
             File prootBinary = MjtPaths.resolve("proot");
 
-            if (rootfsDir.exists() && prootBinary.exists()) {
+            if (DistroProvisioner.isRootfsHealthy(rootfsDir, targetShell)
+                    && prootBinary.exists() && prootBinary.length() > 0) {
                 needsProvisioning = false;
                 OutputLogger.success("Tìm thấy Profile hợp lệ: " + targetRootfs);
             } else {
-                OutputLogger.warning("Phát hiện dữ liệu vật lý bị mất (Môi trường hoặc PRoot đã bị xóa)!");
+                OutputLogger.warning("Phát hiện dữ liệu vật lý bị mất hoặc chưa giải nén hoàn chỉnh (Rootfs/PRoot)!");
                 OutputLogger.info("Đang dọn dẹp cấu hình rác và tiến hành Tự chữa lành (Self-Healing)...");
                 profile.delete();
             }
@@ -174,7 +177,8 @@ public class ServerMain {
                 distroId = ConsoleMenu.showAndSelect();
             } else {
                 distroId = (fallbackDistroId != null && !fallbackDistroId.isEmpty())
-                        ? fallbackDistroId : DistroManager.getDefaultDistroId();
+                        ? fallbackDistroId
+                        : DistroManager.getDefaultDistroId();
                 OutputLogger.warning("Chế độ không tương tác (Plugin): sử dụng distro mặc định '" + distroId
                         + "' (có thể đổi bằng auto-boot-os trong mjt.conf).");
             }
@@ -186,7 +190,7 @@ public class ServerMain {
             Files.writeString(profile.toPath(), targetRootfs + "|" + targetShell);
             OutputLogger.success("Đã lưu cấu hình vòng đời mới vào " + profile.getPath());
         }
-        
+
         return new String[] { targetRootfs, targetShell };
     }
 }

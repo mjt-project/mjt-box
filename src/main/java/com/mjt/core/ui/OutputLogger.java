@@ -25,6 +25,16 @@ public class OutputLogger {
         lastProgressBucket = -1;
     }
 
+    public static void resetProgress() {
+        lastProgressBucket = -1;
+    }
+
+    public static void finishProgress() {
+        if (logSink == null && System.console() != null) {
+            System.out.println();
+        }
+    }
+
     /**
      * Ghi log thông tin hệ thống thông thường
      */
@@ -85,11 +95,27 @@ public class OutputLogger {
             if (totalBytes > 0) {
                 int percent = (int) ((currentBytes * 100) / totalBytes);
                 int bucket = percent / 25;
-                if (bucket > lastProgressBucket || currentBytes >= totalBytes) {
+                if (currentBytes == 0 || bucket > lastProgressBucket || currentBytes >= totalBytes) {
                     lastProgressBucket = bucket;
                     double currentMb = currentBytes / (1024.0 * 1024.0);
                     double totalMb = totalBytes / (1024.0 * 1024.0);
                     sink.accept("INFO", String.format("%s: %d%% (%.2f/%.2f MB)", taskName, percent, currentMb, totalMb));
+                }
+            }
+            return;
+        }
+
+        // Trong môi trường web panel / pipe (Pterodactyl, OuiPanel: System.console() == null),
+        // ký tự \r không ghi đè dòng mà gây spam log → xuất log sạch mỗi mốc 10%.
+        if (System.console() == null) {
+            if (totalBytes > 0) {
+                int percent = (int) ((currentBytes * 100) / totalBytes);
+                int bucket = percent / 10;
+                if (currentBytes == 0 || bucket > lastProgressBucket || currentBytes >= totalBytes) {
+                    lastProgressBucket = bucket;
+                    double currentMb = currentBytes / (1024.0 * 1024.0);
+                    double totalMb = totalBytes / (1024.0 * 1024.0);
+                    info(String.format("%s: %d%% (%.2f/%.2f MB)", taskName, percent, currentMb, totalMb));
                 }
             }
             return;

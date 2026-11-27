@@ -45,6 +45,10 @@ public class ProotOrchestrator {
         }
 
         File resolvedRootfs = MjtPaths.resolve(rootfsDir);
+        File guestRoot = new File(resolvedRootfs, "root");
+        if (resolvedRootfs.isDirectory() && !guestRoot.exists()) {
+            guestRoot.mkdirs();
+        }
         // Lấy thư mục hiện tại của Host / PluginDataFolder
         String hostWorkspace = baseDir.getAbsolutePath();
 
