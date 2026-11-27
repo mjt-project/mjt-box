@@ -6,13 +6,14 @@ import java.nio.file.Paths;
 import java.util.Arrays;
 
 import com.mjt.core.config.ConfigManager;
+import com.mjt.core.config.MjtPaths;
 import com.mjt.core.engine.ProotOrchestrator;
 import com.mjt.core.network.NetworkConfig;
 import com.mjt.core.network.VirtualNetworkManager;
 import com.mjt.core.provision.DistroProvisioner;
 import com.mjt.core.registry.DistroManager;
-import com.mjt.core.ui.ConsoleColors;
 import com.mjt.core.ui.ConsoleMenu;
+import com.mjt.core.ui.OutputLogger;
 
 public class ServerMain {
 
@@ -20,6 +21,8 @@ public class ServerMain {
     private static final String PROFILE_FILE = ".mjt-profile";
 
     public static void main(String[] args) {
+        MjtPaths.init(new File("."));
+
         System.out.println("==================================================");
         System.out.println("       MJT Core - Managed Java Terminal           ");
         System.out.println("       Rootless Containerization Framework        ");
@@ -38,65 +41,9 @@ public class ServerMain {
         }
 
         try {
-            File profile = new File(PROFILE_FILE);
-            String targetRootfs = null;
-            String targetShell = null;
-            
-            // Cờ đánh dấu hệ thống có cần cài đặt lại từ đầu không
-            boolean needsProvisioning = true; 
-
-            if (profile.exists()) {
-                String profileData = Files.readString(Paths.get(PROFILE_FILE)).trim();
-                String[] parts = profileData.split("\\|");
-                targetRootfs = parts[0];
-                targetShell = parts.length > 1 ? parts[1] : "/bin/sh";
-
-                // ==========================================
-                // BƯỚC MỚI: SANITY CHECK (KIỂM TRA TOÀN VẸN VẬT LÝ)
-                // ==========================================
-                File rootfsDir = new File(targetRootfs);
-                File prootBinary = new File("proot");
-
-                if (rootfsDir.exists() && prootBinary.exists()) {
-                    // Mọi thứ hoàn hảo, không cần cài lại
-                    needsProvisioning = false;
-                    System.out.println("[+] Tìm thấy Profile hợp lệ: " + targetRootfs);
-                } else {
-                    // Cảnh báo khi bị xóa trộm
-                    System.err.println(ConsoleColors.YELLOW + "[!] Phát hiện dữ liệu vật lý bị mất (Môi trường hoặc PRoot đã bị xóa)!" + ConsoleColors.RESET);
-                    System.err.println("[*] Đang dọn dẹp cấu hình rác và tiến hành Tự chữa lành (Self-Healing)...");
-                    
-                    // Xóa thẳng tay cái file profile báo cáo láo này đi
-                    profile.delete(); 
-                }
-            }
-
-                // ==========================================
-                // QUY TRÌNH CÀI ĐẶT (Kích hoạt khi chưa cài, hoặc file bị xóa)
-                // ==========================================
-                if (needsProvisioning) {
-                    System.out.println("[-] Kích hoạt Setup Wizard...");
-
-                    // Đọc biến tự động khởi động từ file cấu hình
-                    String autoBootConfig = ConfigManager.get("auto-boot-os",   "");
-                    String distroId;
-
-                    if (!autoBootConfig.isEmpty()) {
-                        System.out.println("[*] Chế độ Auto-boot được kích hoạt: " +    autoBootConfig);
-                        distroId = autoBootConfig; // Lấy luôn ID từ file conf, bỏ qua Menu
-                    } else {
-                        // Nếu người dùng để trống, mới bật Menu lên cho họ chọn
-                        distroId = ConsoleMenu.showAndSelect();
-                    }
-
-                    String[] provisionResult = DistroProvisioner.install(distroId);
-
-                    targetRootfs = provisionResult[0];
-                    targetShell = provisionResult[1];
-
-                    Files.writeString(Paths.get(PROFILE_FILE), targetRootfs + "|" + targetShell);
-                    System.out.println("[+] Đã lưu cấu hình vòng đời mới vào " + PROFILE_FILE);
-                }
+            String[] env = ensureEnvironmentProvisioned(true, null);
+            String targetRootfs = env[0];
+            String targetShell = env[1];
 
             // ==========================================
             // KHỞI ĐỘNG MẠNG ẢO MJT (Virtual Network Manager)
@@ -121,5 +68,63 @@ public class ServerMain {
             System.err.println("\n[MJT-Fatal] Lỗi hệ thống nghiêm trọng: " + e.getMessage());
             e.printStackTrace();
         }
+    }
+
+    /**
+     * Đảm bảo PRoot + Rootfs đã được cài đặt và đồng bộ hóa với .mjt-profile trong MjtPaths.
+     * Dùng chung cho cả chế độ Standalone và chế độ Plugin (Paper).
+     */
+    public static String[] ensureEnvironmentProvisioned(boolean allowInteractiveMenu, String fallbackDistroId) throws Exception {
+        File profile = MjtPaths.resolve(PROFILE_FILE);
+        String targetRootfs = null;
+        String targetShell = null;
+
+        boolean needsProvisioning = true;
+
+        if (profile.exists()) {
+            String profileData = Files.readString(profile.toPath()).trim();
+            String[] parts = profileData.split("\\|");
+            targetRootfs = parts[0];
+            targetShell = parts.length > 1 ? parts[1] : "/bin/sh";
+
+            File rootfsDir = MjtPaths.resolve(targetRootfs);
+            File prootBinary = MjtPaths.resolve("proot");
+
+            if (rootfsDir.exists() && prootBinary.exists()) {
+                needsProvisioning = false;
+                OutputLogger.success("Tìm thấy Profile hợp lệ: " + targetRootfs);
+            } else {
+                OutputLogger.warning("Phát hiện dữ liệu vật lý bị mất (Môi trường hoặc PRoot đã bị xóa)!");
+                OutputLogger.info("Đang dọn dẹp cấu hình rác và tiến hành Tự chữa lành (Self-Healing)...");
+                profile.delete();
+            }
+        }
+
+        if (needsProvisioning) {
+            OutputLogger.info("Kích hoạt Setup Wizard...");
+
+            String autoBootConfig = ConfigManager.get("auto-boot-os", "");
+            String distroId;
+
+            if (!autoBootConfig.isEmpty()) {
+                OutputLogger.info("Chế độ Auto-boot được kích hoạt: " + autoBootConfig);
+                distroId = autoBootConfig;
+            } else if (allowInteractiveMenu) {
+                distroId = ConsoleMenu.showAndSelect();
+            } else {
+                distroId = (fallbackDistroId != null && !fallbackDistroId.isEmpty()) ? fallbackDistroId : "alpine-latest";
+                OutputLogger.warning("Chế độ không tương tác (Plugin): sử dụng distro mặc định '" + distroId
+                        + "' (có thể đổi bằng auto-boot-os trong mjt.conf).");
+            }
+
+            String[] provisionResult = DistroProvisioner.install(distroId);
+            targetRootfs = provisionResult[0];
+            targetShell = provisionResult[1];
+
+            Files.writeString(profile.toPath(), targetRootfs + "|" + targetShell);
+            OutputLogger.success("Đã lưu cấu hình vòng đời mới vào " + profile.getPath());
+        }
+
+        return new String[] { targetRootfs, targetShell };
     }
 }

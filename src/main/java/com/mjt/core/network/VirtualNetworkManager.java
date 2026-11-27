@@ -317,4 +317,13 @@ public class VirtualNetworkManager {
     }
 
     public boolean isStarted() { return started; }
+
+    public int getActiveMultiplexerPort() {
+        return (smartMultiplexer != null && smartMultiplexer.isRunning())
+                ? smartMultiplexer.getActualBoundPort() : -1;
+    }
+
+    public boolean isMultiplexerUdpActive() {
+        return smartMultiplexer != null && smartMultiplexer.isUdpActive();
+    }
 }

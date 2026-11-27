@@ -3,6 +3,7 @@ package com.mjt.core.provision;
 import com.mjt.core.boot.HardwareProber;
 import com.mjt.core.registry.DistroManager;
 import com.mjt.core.registry.DistroManifest;
+import com.mjt.core.config.MjtPaths;
 import com.mjt.core.ui.OutputLogger;
 
 import java.io.File;
@@ -31,7 +32,7 @@ public class DistroProvisioner {
         OutputLogger.info("Bắt đầu tiến trình cấp phát tài nguyên cho: " + manifest.getDisplayName());
 
         // 2. Chuẩn bị lõi thực thi PRoot
-        File prootFile = new File("proot");
+        File prootFile = MjtPaths.resolve("proot");
         if (!prootFile.exists()) {
             OutputLogger.warning("Thiếu lõi PRoot. Đang truy xuất phiên bản mới nhất từ GitHub...");
             String prootUrl = fetchDynamicProotUrl();
@@ -44,13 +45,13 @@ public class DistroProvisioner {
 
         // 3. Chuẩn bị Hệ thống tệp gốc (Rootfs)
         String targetDirName = distroId + "-fs";
-        File rootfsDir = new File(targetDirName);
+        File rootfsDir = MjtPaths.resolve(targetDirName);
         
         if (!rootfsDir.exists()) {
             // Lấy URL và trích xuất tên file (VD: ubuntu-base.tar.gz)
             String rootfsUrl = manifest.getDownloadUrl();
             String fileName = rootfsUrl.substring(rootfsUrl.lastIndexOf('/') + 1);
-            File archiveFile = new File(fileName);
+            File archiveFile = MjtPaths.resolve(fileName);
 
             if (!archiveFile.exists()) {
                 OutputLogger.info("Đang kết nối đến máy chủ kho lưu trữ gốc...");
@@ -62,7 +63,9 @@ public class DistroProvisioner {
             rootfsDir.mkdir();
             
             // Lệnh tar tự động nhận diện cả .tar.gz và .tar.xz
-            Process tarProcess = new ProcessBuilder("tar", "-xf", fileName, "-C", targetDirName).start();
+            Process tarProcess = new ProcessBuilder("tar", "-xf", fileName, "-C", targetDirName)
+                    .directory(MjtPaths.getBaseDir())
+                    .start();
             int exitCode = tarProcess.waitFor();
             
             if (exitCode != 0) {

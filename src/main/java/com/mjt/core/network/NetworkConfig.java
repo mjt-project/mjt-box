@@ -1,5 +1,6 @@
 package com.mjt.core.network;
 
+import com.mjt.core.config.MjtPaths;
 import com.mjt.core.ui.OutputLogger;
 
 import java.io.File;
@@ -27,7 +28,7 @@ import java.util.Map;
  */
 public class NetworkConfig {
 
-    private static final String CONFIG_FILE = "./network-config.json";
+    private static final String CONFIG_FILE = "network-config.json";
 
     // ===== Cấu hình chung =====
     private boolean enabled;
@@ -99,7 +100,7 @@ public class NetworkConfig {
     }
 
     public static NetworkConfig load() {
-        File configFile = new File(CONFIG_FILE);
+        File configFile = MjtPaths.resolve(CONFIG_FILE);
 
         if (!configFile.exists()) {
             OutputLogger.warning("Không tìm thấy tệp cấu hình mạng. Đang khởi tạo " + CONFIG_FILE + "...");
@@ -121,7 +122,7 @@ public class NetworkConfig {
     }
 
     public static String getConfigFilePath() {
-        return CONFIG_FILE;
+        return MjtPaths.resolve(CONFIG_FILE).getPath();
     }
 
     // ==========================================
@@ -450,9 +451,13 @@ public class NetworkConfig {
                 "  }\n" +
                 "}\n";
 
-        try (FileOutputStream fos = new FileOutputStream(CONFIG_FILE)) {
+        File outFile = MjtPaths.resolve(CONFIG_FILE);
+        if (outFile.getParentFile() != null) {
+            outFile.getParentFile().mkdirs();
+        }
+        try (FileOutputStream fos = new FileOutputStream(outFile)) {
             fos.write(defaultJson.getBytes(StandardCharsets.UTF_8));
-            OutputLogger.success("Đã tạo tệp cấu hình mạng mẫu: " + CONFIG_FILE);
+            OutputLogger.success("Đã tạo tệp cấu hình mạng mẫu: " + outFile.getPath());
         } catch (IOException e) {
             OutputLogger.error("Không thể ghi tệp cấu hình mạng: " + e.getMessage());
         }
@@ -542,6 +547,7 @@ public class NetworkConfig {
 
     public boolean isSmartMultiplexerEnabled() { return smartMultiplexerEnabled; }
     public int getSmartMultiplexerPort() { return smartMultiplexerPort; }
+    public void setSmartMultiplexerPort(int smartMultiplexerPort) { this.smartMultiplexerPort = smartMultiplexerPort; }
     public String getPublicHost() { return publicHost; }
     public int getPublicPort() { return publicPort; }
     public int getSshCheckTimeoutMs() { return sshCheckTimeoutMs; }
@@ -563,6 +569,7 @@ public class NetworkConfig {
     public boolean isMinecraftRouterEnabled() { return minecraftRouterEnabled; }
     public String getMinecraftRouterType() { return minecraftRouterType; }
     public int getMinecraftRouterPort() { return minecraftRouterPort; }
+    public void setMinecraftRouterPort(int minecraftRouterPort) { this.minecraftRouterPort = minecraftRouterPort; }
     public Map<String, Integer> getMinecraftRoutes() { return minecraftRoutes; }
     public List<Integer> getMinecraftUdpTargets() { return minecraftUdpTargets; }
     public int getMinecraftDefaultPort() { return minecraftDefaultPort; }

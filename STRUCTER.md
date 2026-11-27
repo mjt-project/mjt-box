@@ -3,14 +3,23 @@ mjt-core/
 ├── .gitignore
 ├── README.md
 ├── start.sh
+├── build-binary.sh
 ├── STRUCTER.md
 └── src/
     └── main/
         ├── resources/                       # TẦNG DỮ LIỆU TĨNH
-        │   └── distro-registry.json         # Chứa danh sách link tải Ubuntu, Debian, Alpine...
+        │   ├── distro-registry.json         # Chứa danh sách link tải Ubuntu, Debian, Alpine...
+        │   └── plugin.yml                   # Khai báo entrypoint Paper/Spigot/Purpur/Folia
         └── java/
+            ├── org/bukkit/                  # STUB COMPILE-ONLY (bị loại khỏi JAR khi build)
+            │   ├── Server.java
+            │   ├── command/                 # Command, CommandSender, CommandExecutor, PluginCommand...
+            │   └── plugin/                  # Plugin, PluginDescriptionFile, JavaPlugin
             └── com/mjt/core/
-                ├── ServerMain.java          # Điểm neo khởi chạy (Bắt tham số 'nogui')
+                ├── ServerMain.java          # Điểm neo Standalone (Bắt tham số 'nogui')
+                │
+                ├── paper/                   # TẦNG TÍCH HỢP MINECRAFT SERVER
+                │   └── MjtPaperPlugin.java  # Plugin Paper/Folia (/mjt, tự tránh đụng cổng Paper)
                 │
                 ├── ui/                      # TẦNG 1: GIAO TIẾP & MENU TƯƠNG TÁC
                 │   ├── ConsoleMenu.java     # Hiển thị danh sách HĐH, bắt phím chọn (1, 2, 3)
@@ -21,7 +30,8 @@ mjt-core/
                 │   └── HardwareProber.java  # Lấy kiến trúc CPU (x86_64, aarch64)
                 │
                 ├── config/                  # TẦNG 3: QUẢN LÝ CẤU HÌNH
-                │   └── ConfigManager.java   # Đọc/ghi tệp cấu hình mjt.conf
+                │   ├── ConfigManager.java   # Đọc/ghi tệp cấu hình mjt.conf
+                │   └── MjtPaths.java        # Chuẩn hóa thư mục gốc (./ hoặc plugins/MJTCore)
                 │
                 ├── registry/               # TẦNG 4: QUẢN LÝ BẢN PHÂN PHỐI
                 │   ├── DistroManager.java   # Đọc file JSON, lọc HĐH theo CPU

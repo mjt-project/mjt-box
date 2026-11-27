@@ -1,5 +1,7 @@
 package com.mjt.core.ui;
 
+import java.util.function.BiConsumer;
+
 public class OutputLogger {
 
     // ==========================================
@@ -11,10 +13,27 @@ public class OutputLogger {
     private static final String ANSI_YELLOW = "\u001B[33m";
     private static final String ANSI_CYAN = "\u001B[36m";
 
+    private static volatile BiConsumer<String, String> logSink = null;
+    private static volatile int lastProgressBucket = -1;
+
+    /**
+     * Gắn kênh nhận log tùy chỉnh (dùng cho chế độ Plugin như Minecraft Paper).
+     * Truyền null để khôi phục chế độ xuất Terminal trực tiếp (Standalone).
+     */
+    public static void setLogSink(BiConsumer<String, String> sink) {
+        logSink = sink;
+        lastProgressBucket = -1;
+    }
+
     /**
      * Ghi log thông tin hệ thống thông thường
      */
     public static void info(String message) {
+        BiConsumer<String, String> sink = logSink;
+        if (sink != null) {
+            sink.accept("INFO", message);
+            return;
+        }
         System.out.println(ANSI_CYAN + "[*] " + ANSI_RESET + message);
     }
 
@@ -22,6 +41,11 @@ public class OutputLogger {
      * Ghi log thành công
      */
     public static void success(String message) {
+        BiConsumer<String, String> sink = logSink;
+        if (sink != null) {
+            sink.accept("INFO", "[+] " + message);
+            return;
+        }
         System.out.println(ANSI_GREEN + "[+] " + ANSI_RESET + message);
     }
 
@@ -29,6 +53,11 @@ public class OutputLogger {
      * Ghi log cảnh báo
      */
     public static void warning(String message) {
+        BiConsumer<String, String> sink = logSink;
+        if (sink != null) {
+            sink.accept("WARN", message);
+            return;
+        }
         System.out.println(ANSI_YELLOW + "[!] " + ANSI_RESET + message);
     }
 
@@ -36,6 +65,11 @@ public class OutputLogger {
      * Ghi log lỗi nghiêm trọng
      */
     public static void error(String message) {
+        BiConsumer<String, String> sink = logSink;
+        if (sink != null) {
+            sink.accept("ERROR", message);
+            return;
+        }
         System.err.println(ANSI_RED + "[-] " + ANSI_RESET + message);
     }
 
@@ -46,6 +80,20 @@ public class OutputLogger {
      * @param totalBytes Tổng số byte (-1 nếu máy chủ không trả về Content-Length)
      */
     public static void printProgress(String taskName, long currentBytes, long totalBytes) {
+        BiConsumer<String, String> sink = logSink;
+        if (sink != null) {
+            if (totalBytes > 0) {
+                int percent = (int) ((currentBytes * 100) / totalBytes);
+                int bucket = percent / 25;
+                if (bucket > lastProgressBucket || currentBytes >= totalBytes) {
+                    lastProgressBucket = bucket;
+                    double currentMb = currentBytes / (1024.0 * 1024.0);
+                    double totalMb = totalBytes / (1024.0 * 1024.0);
+                    sink.accept("INFO", String.format("%s: %d%% (%.2f/%.2f MB)", taskName, percent, currentMb, totalMb));
+                }
+            }
+            return;
+        }
         if (totalBytes <= 0) {
             // Trường hợp máy chủ ẩn dung lượng file (Chunked Transfer Encoding)
             double megabytes = currentBytes / (1024.0 * 1024.0);

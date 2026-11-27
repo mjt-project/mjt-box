@@ -1,0 +1,17 @@
+name: MJTCore
+version: 1.1.0
+main: com.mjt.core.paper.MjtPaperPlugin
+api-version: '1.19'
+folia-supported: true
+load: STARTUP
+author: MJT
+description: Managed Java Terminal - Virtual Network Manager & Rootless Linux Orchestrator
+commands:
+  mjt:
+    description: Quan ly MJT Core (mang ao va Linux PRoot) trong Paper
+    usage: /mjt <status|reload|setup|boot|exec|log|stop-os>
+    permission: mjt.admin
+permissions:
+  mjt.admin:
+    description: Quyen quan tri MJT Core
+    default: op

@@ -18,7 +18,7 @@ public class ConfigManager {
      * Nạp cấu hình từ bên ngoài. Nếu file chưa tồn tại, tự động tạo mới.
      */
     public static void loadConfig() {
-        File configFile = new File(CONFIG_FILE);
+        File configFile = MjtPaths.resolve(CONFIG_FILE);
 
         if (!configFile.exists()) {
             OutputLogger.warning("Không tìm thấy tệp cấu hình ngoại vi. Đang khởi tạo " + CONFIG_FILE + "...");
