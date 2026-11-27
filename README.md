@@ -5,6 +5,8 @@
 MJT Core là nền tảng điều phối (Orchestrator) viết hoàn toàn bằng Java 11+ (0 Maven dependencies bên ngoài), cho phép chạy **độc lập (Standalone)** hoặc nhúng trực tiếp như một **Plugin của Minecraft Paper / Spigot / Purpur / Folia**.
 
 ---
+## Yêu cầu
+- Java phiên bản từ 17 trở lên (tối thiểu là 11 nhưng có thể lỗi)
 
 ## Tính năng nổi bật
 
