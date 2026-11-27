@@ -2,14 +2,14 @@
 
 ## [0.1.0] - 2026-11-27 (Initial Release)
 
-Phiên bản phát hành đầu tiên **v0.1.0** — kiến trúc Zero-Dependency chạy song song ở cả chế độ **Standalone** và **Minecraft Server Plugin (Paper / Spigot / Purpur / Folia)**.
+Phiên bản phát hành đầu tiên **MJT Box v0.1.0** — kiến trúc Zero-Dependency chạy song song ở cả chế độ **Standalone** và **Minecraft Server Plugin (Paper / Spigot / Purpur / Folia)**.
 
 ### Tính năng chính
 - **Dual-Mode Architecture (Standalone + Paper/Folia Plugin)**:
-  - Đóng gói thành một tệp `server.jar` chuẩn dùng chung (không đóng gói kèm thư viện Bukkit/Spigot; compile-only stubs được loại bỏ khi build).
-  - Tự động tránh xung đột `server-port` của Paper bằng cách dịch cổng Smart Multiplexer khi phát hiện trùng cổng.
-  - Hỗ trợ tệp thực thi Polyglot Standalone `mjt-core` và `start.sh` tự động tải Portable Temurin JRE 21 (`.mjt-jre/`) nếu hệ thống Linux chưa cài sẵn Java.
-- **Rootless Linux Orchestrator (PRoot)**:
+  - Xuất đồng thời `mjt-box.jar` và bản sao tương thích panel `server.jar` (không đóng gói kèm thư viện Bukkit/Spigot; compile-only stubs được loại bỏ khi build).
+  - Tên plugin Paper: **`MJTBox`** (`plugins/MJTBox/`), tự động tránh xung đột `server-port` của Paper bằng cách dịch cổng Smart Multiplexer khi phát hiện trùng cổng.
+  - Hỗ trợ tệp thực thi Polyglot Standalone **`mjt-box`** và `start.sh` tự động tải Portable Temurin JRE 21 (`.mjt-jre/`) nếu hệ thống Linux chưa cài sẵn Java.
+- **Rootless Linux Sandbox (PRoot)**:
   - Hỗ trợ cấp phát tự động `ubuntu-22.04`, `alpine-3.24`, `debian-bullseye` (kèm ánh xạ bí danh `ubuntu`, `alpine`, `debian`).
   - Tải file qua `.part` và giải nén nguyên tử qua thư mục `.tmp`, kiểm tra tính toàn vẹn `isRootfsHealthy(...)` (bao gồm cấu trúc `usrmerge`), tự sửa chữa nếu rootfs cũ bị hỏng/rỗng.
   - Tự dự phòng giải nén `.tar.xz` trên host thiếu `xz` qua `busybox unxz` → `python3 lzma` → static BusyBox x86_64.

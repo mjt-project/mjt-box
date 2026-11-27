@@ -1,8 +1,8 @@
 #!/bin/sh
 # ==============================================================================
-# Tạo file thực thi Polyglot Standalone: target/mjt-core
-# - Chạy trực tiếp như binary trên Linux: ./mjt-core
-# - Vẫn gọi được bằng JVM chuẩn:        java -jar mjt-core
+# Tạo file thực thi Polyglot Standalone: target/mjt-box
+# - Chạy trực tiếp như binary trên Linux: ./mjt-box
+# - Vẫn gọi được bằng JVM chuẩn:        java -jar mjt-box
 # - Tự tải Portable Temurin JRE (.mjt-jre/) nếu máy Linux không có sẵn Java
 # ==============================================================================
 set -e
@@ -10,8 +10,14 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-INPUT_JAR="${1:-target/server.jar}"
-OUTPUT_BIN="${2:-target/mjt-core}"
+if [ -n "$1" ]; then
+    INPUT_JAR="$1"
+elif [ -f "target/mjt-box.jar" ]; then
+    INPUT_JAR="target/mjt-box.jar"
+else
+    INPUT_JAR="target/server.jar"
+fi
+OUTPUT_BIN="${2:-target/mjt-box}"
 
 if [ ! -f "$INPUT_JAR" ]; then
     echo "[-] Không tìm thấy JAR nguồn: $INPUT_JAR (hãy chạy 'mvn package' trước)." >&2

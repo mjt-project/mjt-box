@@ -5,12 +5,12 @@
     <modelVersion>4.0.0</modelVersion>
 
     <groupId>com.mjt</groupId>
-    <artifactId>mjt-core</artifactId>
+    <artifactId>mjt-box</artifactId>
     <version>0.1.0</version>
     <packaging>jar</packaging>
 
-    <name>MJT Core (Managed Java Terminal)</name>
-    <description>Pure-Java Rootless Environment Orchestrator</description>
+    <name>MJT Box</name>
+    <description>Multi-Protocol Java Tunnel &amp; Rootless Linux Sandbox</description>
 
     <properties>
         <maven.compiler.release>11</maven.compiler.release>
@@ -77,10 +77,10 @@
                             </filters>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.mjt.core.ServerMain</mainClass>
+                                    <mainClass>com.mjt.box.ServerMain</mainClass>
                                 </transformer>
                             </transformers>
-                            <finalName>server</finalName>
+                            <finalName>mjt-box</finalName>
                         </configuration>
                     </execution>
                 </executions>

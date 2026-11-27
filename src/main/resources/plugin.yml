@@ -1,17 +1,17 @@
-name: MJTCore
+name: MJTBox
 version: ${project.version}
-main: com.mjt.core.paper.MjtPaperPlugin
+main: com.mjt.box.paper.MjtPaperPlugin
 api-version: '1.19'
 folia-supported: true
 load: STARTUP
 author: MJT
-description: Managed Java Terminal - Virtual Network Manager & Rootless Linux Orchestrator
+description: MJT Box - Virtual Network Manager & Rootless Linux Sandbox
 commands:
   mjt:
-    description: Quan ly MJT Core (mang ao va Linux PRoot) trong Paper
+    description: Quan ly MJT Box (mang ao va Linux PRoot) trong Paper
     usage: /mjt <status|reload|setup|boot|restart|confirm|cancel|exec|log|stop-os>
     permission: mjt.admin
 permissions:
   mjt.admin:
-    description: Quyen quan tri MJT Core
+    description: Quyen quan tri MJT Box
     default: op
