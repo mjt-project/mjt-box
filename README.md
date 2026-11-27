@@ -2,7 +2,7 @@
 
 > A lightweight, zero-dependency, dual-mode Java orchestrator for rootless Linux environments and Smart TCP/UDP Port Multiplexing.
 
-MJT Core là nền tảng điều phối (Orchestrator) viết hoàn toàn bằng Java 11+ (0 Maven dependencies bên ngoài), cho phép chạy **độc lập (Standalone)** hoặc nhúng trực tiếp như một **Plugin của Minecraft Paper / Spigot / Purpur / Folia**.
+MJT Core là nền tảng điều phối (Orchestrator) viết hoàn toàn bằng Java 11+ (0 Maven dependencies bên ngoài), cho phép chạy **độc lập (Standalone)** hoặc nhúng trực tiếp như một **Plugin của Minecraft Buttket / Paper / Spigot / Purpur **.
 
 ---
 ## Yêu cầu
@@ -33,7 +33,6 @@ chmod +x build-binary.sh && ./build-binary.sh
 ```
 Sản phẩm sau khi build:
 - `target/server.jar`: dùng cho cả Standalone (`java -jar server.jar`) và Paper Plugin (`plugins/server.jar`).
-- `target/mjt-core`: tệp thực thi Standalone cho Linux (`./mjt-core` hoặc `java -jar mjt-core`).
 
 ### 2. Chế độ Standalone
 ```bash
@@ -43,7 +42,7 @@ chmod +x start.sh && ./start.sh
 ```
 Các tệp cấu hình tự sinh tại thư mục chạy: `mjt.conf`, `network-config.json`, `startup-commands.sh`.
 
-### 3. Chế độ Minecraft Paper / Folia Plugin
+### 3. Chế độ Minecraft Paper Plugin
 1. Chép `target/server.jar` vào `plugins/` và khởi động server.
 2. Thư mục dữ liệu plugin nằm tại `plugins/MJTCore/` (trên PatchBukkit nằm tại `plugins/data/patchbukkit/paper-runtime/plugins/MJTCore/`).
 3. Các lệnh quản trị (quyền `mjt.admin`, mặc định OP):
