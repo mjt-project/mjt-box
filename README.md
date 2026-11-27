@@ -1,8 +1,8 @@
 # MJT Box — Release `v0.1.0`
 
-> Multi-Protocol Java Tunnel & Rootless Linux Sandbox — Zero-Dependency, Dual-Mode (Standalone + Paper/Folia Plugin).
+> Multi-Protocol Java Tunnel & Rootless Linux Sandbox — Zero-Dependency, Dual-Mode (Standalone + Bukkit / SpigotMC / Paper / Purpur Plugin).
 
-**MJT Box** là nền tảng điều phối hạ tầng gọn nhẹ viết hoàn toàn bằng Java 11+ (0 Maven dependencies bên ngoài), biến một runtime Java hoặc Minecraft Server bất kỳ thành hộp môi trường đa năng gồm **Rootless Linux (PRoot)** và **Smart Port Multiplexer TCP/UDP**.
+**MJT Box** là nền tảng điều phối hạ tầng gọn nhẹ viết hoàn toàn bằng Java 11+ (0 Maven dependencies bên ngoài), biến một runtime Java hoặc Minecraft Server (Bukkit / SpigotMC / Paper / Purpur) bất kỳ thành hộp môi trường đa năng gồm **Rootless Linux (PRoot)** và **Smart Port Multiplexer TCP/UDP**.
 
 ---
 
@@ -10,7 +10,7 @@
 
 - **Dual-Mode Runtime (`mjt-box.jar` / `server.jar`)**:
   - **Standalone**: Chạy bằng `java -jar mjt-box.jar` (hoặc `server.jar`), `./start.sh`, hoặc tệp tự thực thi `mjt-box` trên Linux (tự tải Portable Temurin JRE 21 vào `.mjt-jre/` nếu máy chưa có `java`).
-  - **Minecraft Plugin (`MJTBox`)**: Thả `mjt-box.jar` (hoặc `server.jar`) vào thư mục `plugins/` của Paper/Folia — dùng trực tiếp JVM của Paper, không cần cài thêm thư viện Java ngoài, tự né `server-port` của Paper.
+  - **Minecraft Plugin (`MJTBox`)**: Hỗ trợ dòng **Bukkit / CraftBukkit / SpigotMC / Paper / Purpur** (không hỗ trợ Folia). Thả `mjt-box.jar` (hoặc `server.jar`) vào `plugins/` — dùng trực tiếp JVM của server, không cần cài thêm thư viện Java ngoài, tự né `server-port`.
 - **Rootless Linux Provisioning**:
   - Tự tải PRoot tĩnh và hệ điều hành (`ubuntu-22.04`, `alpine-3.24`, `debian-bullseye`), giải nén nguyên tử (`.part` / `.tmp`), tự chữa lành thư mục hỏng và tự dự phòng `.tar.xz` qua `busybox unxz` / `python3 lzma` / static BusyBox khi host thiếu `xz`.
 - **Startup Script & Xác nhận Restart**:
@@ -41,7 +41,7 @@ chmod +x start.sh && ./start.sh
 ```
 Các tệp cấu hình tự sinh tại thư mục chạy: `mjt.conf`, `network-config.json`, `startup-commands.sh`.
 
-### 3. Chế độ Minecraft Paper / Folia Plugin (`MJTBox`)
+### 3. Chế độ Minecraft Plugin — Bukkit / SpigotMC / Paper / Purpur (`MJTBox`)
 1. Chép `target/mjt-box.jar` vào `plugins/` và khởi động server.
 2. Thư mục dữ liệu plugin nằm tại `plugins/MJTBox/` (trên PatchBukkit nằm tại `plugins/data/patchbukkit/paper-runtime/plugins/MJTBox/`).
 3. Các lệnh quản trị (quyền `mjt.admin`, mặc định OP):

@@ -2,10 +2,10 @@
 
 ## [0.1.0] - 2026-11-27 (Initial Release)
 
-Phiên bản phát hành đầu tiên **MJT Box v0.1.0** — kiến trúc Zero-Dependency chạy song song ở cả chế độ **Standalone** và **Minecraft Server Plugin (Paper / Spigot / Purpur / Folia)**.
+Phiên bản phát hành đầu tiên **MJT Box v0.1.0** — kiến trúc Zero-Dependency chạy song song ở cả chế độ **Standalone** và **Minecraft Server Plugin (Bukkit / CraftBukkit / SpigotMC / Paper / Purpur)**.
 
 ### Tính năng chính
-- **Dual-Mode Architecture (Standalone + Paper/Folia Plugin)**:
+- **Dual-Mode Architecture (Standalone + Bukkit / SpigotMC / Paper / Purpur Plugin)**:
   - Xuất đồng thời `mjt-box.jar` và bản sao tương thích panel `server.jar` (không đóng gói kèm thư viện Bukkit/Spigot; compile-only stubs được loại bỏ khi build).
   - Tên plugin Paper: **`MJTBox`** (`plugins/MJTBox/`), tự động tránh xung đột `server-port` của Paper bằng cách dịch cổng Smart Multiplexer khi phát hiện trùng cổng.
   - Hỗ trợ tệp thực thi Polyglot Standalone **`mjt-box`** và `start.sh` tự động tải Portable Temurin JRE 21 (`.mjt-jre/`) nếu hệ thống Linux chưa cài sẵn Java.

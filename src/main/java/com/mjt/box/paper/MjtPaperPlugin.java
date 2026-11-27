@@ -28,9 +28,8 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
 
 /**
- * Entrypoint cho chế độ Minecraft Plugin (Paper / Spigot / Purpur / Folia).
- * Sử dụng JVM và Bukkit/Paper API có sẵn của máy chủ Minecraft — không đóng gói
- * thêm thư viện Java ngoài.
+ * Entrypoint cho chế độ Minecraft Plugin (Bukkit / CraftBukkit / SpigotMC / Paper / Purpur).
+ * Không hỗ trợ Folia. Sử dụng JVM và Bukkit/Paper API có sẵn của máy chủ Minecraft.
  */
 public class MjtPaperPlugin extends JavaPlugin {
 
@@ -46,6 +45,10 @@ public class MjtPaperPlugin extends JavaPlugin {
 
     @Override
     public void onLoad() {
+        if (isFoliaServer()) {
+            logFoliaUnsupported();
+            return;
+        }
         initPathsAndLogger();
         ConfigManager.loadConfig();
         StartupScriptManager.ensureStartupFile();
@@ -55,6 +58,10 @@ public class MjtPaperPlugin extends JavaPlugin {
 
     @Override
     public void onEnable() {
+        if (isFoliaServer()) {
+            logFoliaUnsupported();
+            return;
+        }
         this.shuttingDown = false;
         initPathsAndLogger();
         ConfigManager.loadConfig();
@@ -452,6 +459,26 @@ public class MjtPaperPlugin extends JavaPlugin {
         sender.sendMessage("=== PRoot Logs (" + (logs.size() - start) + " dòng gần nhất) ===");
         for (int i = start; i < logs.size(); i++) {
             sender.sendMessage(logs.get(i));
+        }
+    }
+
+    private boolean isFoliaServer() {
+        Server srv = getServer();
+        if (srv == null) {
+            return false;
+        }
+        String name = srv.getName() != null ? srv.getName().toLowerCase(Locale.ROOT) : "";
+        String ver = srv.getVersion() != null ? srv.getVersion().toLowerCase(Locale.ROOT) : "";
+        return name.contains("folia") || ver.contains("folia");
+    }
+
+    private void logFoliaUnsupported() {
+        Logger logger = getLogger();
+        String msg = "MJTBox không hỗ trợ Folia. Chỉ hỗ trợ Bukkit / CraftBukkit / SpigotMC / Paper / Purpur.";
+        if (logger != null) {
+            logger.severe(msg);
+        } else {
+            System.err.println("[MJTBox] " + msg);
         }
     }
 

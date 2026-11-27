@@ -11,7 +11,7 @@ mjt-box/
         ├── resources/                       # TẦNG DỮ LIỆU TĨNH
         │   ├── app.properties               # Phiên bản đồng bộ từ Maven (${project.version})
         │   ├── distro-registry.json         # Chứa danh sách link tải Ubuntu, Debian, Alpine...
-        │   └── plugin.yml                   # Khai báo entrypoint Paper/Spigot/Purpur/Folia (MJTBox)
+        │   └── plugin.yml                   # Khai báo entrypoint Bukkit/SpigotMC/Paper/Purpur (MJTBox)
         └── java/
             ├── org/bukkit/                  # STUB COMPILE-ONLY (bị loại khỏi JAR khi build)
             │   ├── Server.java
@@ -21,7 +21,7 @@ mjt-box/
                 ├── ServerMain.java          # Điểm neo Standalone (Bắt tham số 'nogui')
                 │
                 ├── paper/                   # TẦNG TÍCH HỢP MINECRAFT SERVER
-                │   └── MjtPaperPlugin.java  # Plugin Paper/Folia (/mjt, tự tránh đụng cổng Paper)
+                │   └── MjtPaperPlugin.java  # Plugin Bukkit/SpigotMC/Paper/Purpur (/mjt, tự tránh đụng cổng)
                 │
                 ├── ui/                      # TẦNG 1: GIAO TIẾP & MENU TƯƠNG TÁC
                 │   ├── ConsoleMenu.java     # Hiển thị danh sách HĐH, bắt phím chọn (1, 2, 3)
