@@ -1,24 +1,23 @@
 #!/bin/sh
 # ==============================================================================
 # MJT Box Standalone Launcher
-# Tự động phát hiện Java, hoặc tải JRE Temurin thu gọn cục bộ vào .mjt-jre/
-# khi hệ thống Linux chưa cài đặt sẵn Java.
+# Tự động tìm mjt-box_<version>.jar và phát hiện Java (hoặc tải JRE Temurin
+# thu gọn vào .mjt-jre/ khi hệ thống Linux chưa cài sẵn Java).
 # ==============================================================================
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
 
-if [ -f "mjt-box.jar" ]; then
-    JAR_FILE="mjt-box.jar"
-elif [ -f "server.jar" ]; then
-    JAR_FILE="server.jar"
-elif [ -f "target/mjt-box.jar" ]; then
-    JAR_FILE="target/mjt-box.jar"
-elif [ -f "target/server.jar" ]; then
-    JAR_FILE="target/server.jar"
-else
-    echo "[!] Không tìm thấy mjt-box.jar hoặc server.jar trong $SCRIPT_DIR" >&2
+JAR_FILE=""
+for candidate in "$SCRIPT_DIR"/mjt-box_*.jar "$SCRIPT_DIR"/target/mjt-box_*.jar; do
+    if [ -f "$candidate" ]; then
+        JAR_FILE="$candidate"
+    fi
+done
+
+if [ -z "$JAR_FILE" ]; then
+    echo "[!] Không tìm thấy file mjt-box_<version>.jar (hãy chạy 'mvn package -DskipTests' trước)." >&2
     exit 1
 fi
 

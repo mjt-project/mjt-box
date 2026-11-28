@@ -8,9 +8,9 @@
 
 ## Tính năng nổi bật
 
-- **Dual-Mode Runtime (`mjt-box.jar` / `server.jar`)**:
-  - **Standalone**: Chạy bằng `java -jar mjt-box.jar` (hoặc `server.jar`), `./start.sh`, hoặc tệp tự thực thi `mjt-box` trên Linux (tự tải Portable Temurin JRE 21 vào `.mjt-jre/` nếu máy chưa có `java`).
-  - **Minecraft Plugin (`MJTBox`)**: Hỗ trợ dòng **Bukkit / CraftBukkit / SpigotMC / Paper / Purpur** (không hỗ trợ Folia). Thả `mjt-box.jar` (hoặc `server.jar`) vào `plugins/` — dùng trực tiếp JVM của server, không cần cài thêm thư viện Java ngoài, tự né `server-port`.
+- **Dual-Mode Runtime (`mjt-box_<version>.jar`)**:
+  - **Standalone**: Chạy trực tiếp bằng `java -jar mjt-box_0.1.0.jar nogui` hoặc `./start.sh` trên Linux (tự tải Portable Temurin JRE 21 vào `.mjt-jre/` nếu máy chưa có `java`).
+  - **Minecraft Plugin (`MJTBox`)**: Hỗ trợ dòng **Bukkit / CraftBukkit / SpigotMC / Paper / Purpur** (không hỗ trợ Folia). Thả `mjt-box_0.1.0.jar` vào `plugins/` — dùng trực tiếp JVM của server, không cần cài thêm thư viện Java ngoài, tự né `server-port`.
 - **Rootless Linux Provisioning**:
   - Tự tải PRoot tĩnh và hệ điều hành (`ubuntu-22.04`, `alpine-3.24`, `debian-bullseye`), giải nén nguyên tử (`.part` / `.tmp`), tự chữa lành thư mục hỏng và tự dự phòng `.tar.xz` qua `busybox unxz` / `python3 lzma` / static BusyBox khi host thiếu `xz`.
 - **Startup Script & Xác nhận Restart**:
@@ -26,23 +26,20 @@
 ### 1. Build từ mã nguồn
 ```bash
 mvn package -DskipTests
-# Tùy chọn trên Linux để tạo thêm file thực thi Standalone:
-chmod +x build-binary.sh && ./build-binary.sh
 ```
-Sản phẩm sau khi build:
-- `target/mjt-box.jar`: file JAR chính (cùng bản sao `target/server.jar` cho các hosting panel yêu cầu tên `server.jar`).
-- `target/mjt-box`: tệp thực thi Standalone cho Linux (`./mjt-box` hoặc `java -jar mjt-box`).
+Sản phẩm sau khi build duy nhất tại:
+- `target/mjt-box_<phiên_bản>.jar` (ví dụ: `target/mjt-box_0.1.0.jar`): dùng trực tiếp cho cả chế độ Standalone và Plugin Minecraft.
 
 ### 2. Chế độ Standalone
 ```bash
-java -jar mjt-box.jar nogui
+java -jar mjt-box_0.1.0.jar nogui
 # Hoặc trên Linux (tự tải JRE nếu chưa cài Java):
 chmod +x start.sh && ./start.sh
 ```
 Các tệp cấu hình tự sinh tại thư mục chạy: `mjt.conf`, `network-config.json`, `startup-commands.sh`.
 
 ### 3. Chế độ Minecraft Plugin — Bukkit / SpigotMC / Paper / Purpur (`MJTBox`)
-1. Chép `target/mjt-box.jar` vào `plugins/` và khởi động server.
+1. Chép `target/mjt-box_0.1.0.jar` vào `plugins/` và khởi động server.
 2. Thư mục dữ liệu plugin nằm tại `plugins/MJTBox/` (trên PatchBukkit nằm tại `plugins/data/patchbukkit/paper-runtime/plugins/MJTBox/`).
 3. Các lệnh quản trị (quyền `mjt.admin`, mặc định OP):
    - `/mjt status` — xem trạng thái mạng ảo, PRoot và đường dẫn `startup-commands.sh`

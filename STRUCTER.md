@@ -4,7 +4,6 @@ mjt-box/
 ├── README.md
 ├── CHANGELOG.md
 ├── start.sh
-├── build-binary.sh
 ├── STRUCTER.md
 └── src/
     └── main/

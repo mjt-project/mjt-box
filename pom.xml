@@ -18,6 +18,7 @@
     </properties>
 
     <build>
+        <finalName>${project.artifactId}_${project.version}</finalName>
         <resources>
             <resource>
                 <directory>src/main/resources</directory>
@@ -43,7 +44,7 @@
                 <version>3.13.0</version>
             </plugin>
 
-            <!-- Exclude compile-only Bukkit/Paper API stubs from packaged JARs -->
+            <!-- Build a single dual-mode JAR (mjt-box_<version>.jar) excluding compile-only Bukkit stubs -->
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>
                 <artifactId>maven-jar-plugin</artifactId>
@@ -52,38 +53,12 @@
                     <excludes>
                         <exclude>org/bukkit/**</exclude>
                     </excludes>
+                    <archive>
+                        <manifest>
+                            <mainClass>com.mjt.box.ServerMain</mainClass>
+                        </manifest>
+                    </archive>
                 </configuration>
-            </plugin>
-
-            <plugin>
-                <groupId>org.apache.maven.plugins</groupId>
-                <artifactId>maven-shade-plugin</artifactId>
-                <version>3.6.0</version>
-                <executions>
-                    <execution>
-                        <phase>package</phase>
-                        <goals>
-                            <goal>shade</goal>
-                        </goals>
-                        <configuration>
-                            <createDependencyReducedPom>false</createDependencyReducedPom>
-                            <filters>
-                                <filter>
-                                    <artifact>*:*</artifact>
-                                    <excludes>
-                                        <exclude>org/bukkit/**</exclude>
-                                    </excludes>
-                                </filter>
-                            </filters>
-                            <transformers>
-                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.mjt.box.ServerMain</mainClass>
-                                </transformer>
-                            </transformers>
-                            <finalName>mjt-box</finalName>
-                        </configuration>
-                    </execution>
-                </executions>
             </plugin>
         </plugins>
     </build>
